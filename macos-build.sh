@@ -83,8 +83,8 @@ Version: 0.2.86
 Installed-Size: 3080
 EOF
 echo "2.0" > debian-binary
-tar -C CTL -czf control.tar.gz --owner=0 --group=0 .
-tar -C DATA -cf data.tar --owner=0 --group=0 .
+tar -C CTL -czf control.tar.gz .
+tar -C DATA -cf data.tar .
 xz -F lzma -f data.tar
 OUT="${OUT_DIR:-$PWD}/Bottom-x_0.2.86_上滑返回_Bkey-macOS.deb"
 ar rcs "$OUT" debian-binary control.tar.gz data.tar.lzma
