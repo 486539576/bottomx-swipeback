@@ -17,9 +17,10 @@ DYLIB=$(find .theos -name 'HomeTapBackSwipe.dylib' 2>/dev/null | head -1)
 echo "产物: $DYLIB"; file "$DYLIB" | head -1
 
 # ---- 2. substrate 依赖改为 roothide 的 .jbroot（与原件一致）----
+export DYLIB_PATH="$DYLIB"
 python3 - <<'PY'
-import struct
-p = "$DYLIB".strip("'")
+import struct, os
+p = os.environ['DYLIB_PATH']
 d = bytearray(open(p,'rb').read())
 slices = []
 if d[:4] == b'\xca\xfe\xba\xbe':
