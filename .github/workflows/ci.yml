@@ -1,0 +1,25 @@
+name: Build Bottom-x 上滑返回 (macOS)
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: install deps
+        run: brew install dpkg coreutils xz
+      - name: install theos
+        run: |
+          export THEOS="$RUNNER_TEMP/theos"
+          git clone --recursive --depth 1 https://github.com/theos/theos "$THEOS"
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+      - name: build
+        run: |
+          chmod +x macos-build.sh
+          ./macos-build.sh
+      - name: upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bottom-xSwipeBackBkey
+          path: '*.deb'
