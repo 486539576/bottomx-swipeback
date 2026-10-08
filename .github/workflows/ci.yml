@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: install deps
-        run: brew install dpkg coreutils xz
+        run: brew install dpkg coreutils xz ldid
       - name: install theos
         run: |
           export THEOS="$RUNNER_TEMP/theos"
