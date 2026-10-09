@@ -13,6 +13,7 @@
 #import <notify.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <unistd.h>
 #import <os/log.h>
 
 static void bx_log(NSString *fmt, ...) {
@@ -202,37 +203,35 @@ static void bx_goHome(void) {
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    UIPanGestureRecognizer *gr = (UIPanGestureRecognizer *)self;
-    UITouch *t = touches.anyObject;
-    NSValue *sv = objc_getAssociatedObject(self, @selector(bxSwipeStart));
-    NSNumber *handled = objc_getAssociatedObject(self, @selector(bxSwipeHandled));
-    CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
-    CGPoint cur   = (t && gr.view) ? [t locationInView:gr.view] : start;
-
-    // 桌面/锁屏：放行，不处理
-    if (!bx_hasForegroundApp() || bx_isLocked()) { %orig; return; }
-
-    if (g_enabled && !handled.boolValue && start.x >= 0) {
-        if (bx_inCorner(start)) {
-            CGRect b = [UIScreen mainScreen].bounds;
-            CGFloat zoneW = bx_lerp(0.10f, 0.25f, g_backSens);
-            BOOL inLeft  = start.x <= b.size.width * zoneW;
-            BOOL inRight = start.x >= b.size.width * (1.0f - zoneW);
-            CGFloat dx = cur.x - start.x;
-            CGFloat thresh = bx_lerp(42.f, 14.f, g_backSens);   // 横向位移阈值（灵敏度高→滑一点就触发）
-            BOOL dirOK = (inLeft && dx > thresh) || (inRight && dx < -thresh);
-            if (dirOK) {
-                objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(YES), OBJC_ASSOCIATION_RETAIN);
-                bx_swallowGesture(gr);          // 避免系统把横滑当别的
-                bx_sendBackNotify();            // 通知 App 层执行返回；最上级则自动回桌面
-                bx_sendOriginalBackNotify();    // 兼容原版 HomeTapBackApp
-                bx_log(@"[SwipeBack] horizontal swipe -> back (left=%d dir=%s)",
-                       inLeft, (inLeft ? "right" : "left"));
-                return;                         // 不 %orig
-            }
-        }
-    }
     %orig;
+    // 桌面/锁屏 或 未启用：不处理，完全放行系统
+    if (!bx_hasForegroundApp() || bx_isLocked()) return;
+    if (!g_enabled) return;
+    NSNumber *handled = objc_getAssociatedObject(self, @selector(bxSwipeHandled));
+    if (handled.boolValue) return;
+    NSValue *sv = objc_getAssociatedObject(self, @selector(bxSwipeStart));
+    CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
+    if (start.x < 0) return;
+    if (!bx_inCorner(start)) return;
+
+    UIGestureRecognizer *gr = (UIGestureRecognizer *)self;
+    UITouch *t = touches.anyObject;
+    CGPoint cur = (t && gr.view) ? [t locationInView:gr.view] : start;
+    CGRect b = [UIScreen mainScreen].bounds;
+    CGFloat zoneW = bx_lerp(0.10f, 0.25f, g_backSens);
+    BOOL inLeft  = start.x <= b.size.width * zoneW;
+    BOOL inRight = start.x >= b.size.width * (1.0f - zoneW);
+    CGFloat dx = cur.x - start.x;
+    CGFloat thresh = bx_lerp(42.f, 14.f, g_backSens);   // 横向位移阈值（灵敏度高→滑一点就触发）
+    BOOL dirOK = (inLeft && dx > thresh) || (inRight && dx < -thresh);
+    if (dirOK) {
+        objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(YES), OBJC_ASSOCIATION_RETAIN);
+        bx_swallowGesture(gr);          // 取消系统手势，避免被当后台/其他
+        bx_sendBackNotify();            // 通知 App 层执行返回；最上级则自动回桌面
+        bx_sendOriginalBackNotify();    // 兼容原版 HomeTapBackApp
+        bx_log(@"[SwipeBack] horizontal swipe -> back (left=%d dir=%s)",
+               inLeft, (inLeft ? "right" : "left"));
+    }
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
