@@ -108,7 +108,7 @@ static BOOL bx_inCorner(CGPoint start) {
 }
 
 // 吞掉手势（避免系统把横向滑动当别的）
-static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
+static void bx_swallowGesture(UIGestureRecognizer *gr) {
     if (!gr) return;
     @try {
         [gr setValue:@(UIGestureRecognizerStateFailed) forKey:@"state"];
