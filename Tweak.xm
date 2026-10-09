@@ -111,23 +111,40 @@ static void bx_sendOriginalBackNotify(void) {
     bx_log(@"[SwipeBack] original back-notify posted -> %@", kNotifyHomeTap);
 }
 
-// 返回桌面（二次确认）：优先插件自身 go-home，回退系统 home 派发
+// 返回桌面（App 最上级再上滑时的终点）：多方式依次尝试，确保至少一个生效
 static void bx_goHome(void) {
-    bx_log(@"[SwipeBack] ACTION go-home (二次确认)");
-    Class disp = NSClassFromString(@"BXHomeDispatcher");
-    id d = bx_sharedInstanceForClass(disp);
-    SEL dgh = NSSelectorFromString(@"dispatchGoHome");
-    if (d && [d respondsToSelector:dgh]) {
-        ((void (*)(id, SEL))[d methodForSelector:dgh])(d, dgh);
-        return;
-    }
-    Class sbui = NSClassFromString(@"SBUIController");
-    id c = bx_sharedInstanceForClass(sbui);
-    SEL s1 = NSSelectorFromString(@"handleHomeButtonSinglePressUp");
-    SEL s2 = NSSelectorFromString(@"_handleHomeButtonSinglePressUp");
-    if (c && [c respondsToSelector:s1])      ((void (*)(id, SEL))[c methodForSelector:s1])(c, s1);
-    else if (c && [c respondsToSelector:s2]) ((void (*)(id, SEL))[c methodForSelector:s2])(c, s2);
-    else                                      notify_post([kNotifyGoHome UTF8String]);
+    bx_log(@"[SwipeBack] ACTION go-home");
+    // 1) 原版 BXHomeDispatcher.dispatchGoHome（最贴近原插件回桌面）
+    @try {
+        Class disp = NSClassFromString(@"BXHomeDispatcher");
+        id d = bx_sharedInstanceForClass(disp);
+        if (!d && disp) d = [[disp alloc] init];
+        SEL dgh = NSSelectorFromString(@"dispatchGoHome");
+        if (d && [d respondsToSelector:dgh]) {
+            ((void (*)(id, SEL))[d methodForSelector:dgh])(d, dgh);
+            bx_log(@"[SwipeBack] go-home via BXHomeDispatcher");
+            return;
+        }
+    } @catch (...) {}
+    // 2) 系统 Home 键单按派发
+    @try {
+        Class sbui = NSClassFromString(@"SBUIController");
+        id c = bx_sharedInstanceForClass(sbui);
+        for (NSString *sn in @[@"handleHomeButtonSinglePressUp", @"_handleHomeButtonSinglePressUp"]) {
+            SEL s = NSSelectorFromString(sn);
+            if (c && [c respondsToSelector:s]) {
+                ((void (*)(id, SEL))[c methodForSelector:s])(c, s);
+                bx_log(@"[SwipeBack] go-home via %@", sn);
+                return;
+            }
+        }
+    } @catch (...) {}
+    // 3) 发原版 gohome 通知 + 系统 home 通知兜底
+    @try {
+        notify_post([kNotifyGoHome UTF8String]);
+        notify_post("com.colorblack.bottomx.gohome");
+        bx_log(@"[SwipeBack] go-home via notify");
+    } @catch (...) {}
 }
 
 // 触发后台 (App Switcher)
@@ -308,6 +325,11 @@ static BOOL bx_hasForegroundApp(void) {
 static void bxOnGoHomeNotify(CFNotificationCenterRef center, void *observer,
                              CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     bx_log(@"[SwipeBack] got go-home notify from App layer");
+    @try {
+        NSString *marker = [NSString stringWithFormat:@"%@ SB got gohome\n", [NSDate date]];
+        [marker writeToFile:@"/var/mobile/swipeback_gohome_got.txt" atomically:YES
+                   encoding:NSUTF8StringEncoding error:nil];
+    } @catch (...) {}
     dispatch_async(dispatch_get_main_queue(), ^{ bx_goHome(); });
 }
 

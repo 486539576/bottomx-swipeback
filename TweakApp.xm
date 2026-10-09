@@ -73,6 +73,12 @@ static void bxTriggerBack(UIView *view) {
 
     // 4) 已到 App 最上级、无返回可执行 -> 请求 SB 层回桌面（一路返回的终点）
     if (!handled) {
+        @try {
+            NSString *marker = [NSString stringWithFormat:@"%@ root->gohome %@\n",
+                                [NSDate date], [[NSBundle mainBundle] bundleIdentifier]];
+            [marker writeToFile:@"/var/mobile/swipeback_gohome_sent.txt" atomically:YES
+                       encoding:NSUTF8StringEncoding error:nil];
+        } @catch (...) {}
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                              CFSTR("com.doubao.swipeback.gohome"), NULL, NULL, true);
         bx_log(@"[SwipeBackApp] at root page -> request go-home");
