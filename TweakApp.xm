@@ -9,6 +9,7 @@
 // ============================================================================
 
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
 #import <os/log.h>
 
 static void bx_log(NSString *fmt, ...) {
@@ -78,14 +79,13 @@ static BXEdgeProxy *bxProxy = nil;
 
 static void bxInstallEdges(void) {
     if (!bx_active()) return;
-    UIWindow *win = [UIApplication sharedApplication].keyWindow;
+    UIWindow *win = [UIApplication sharedApplication].windows.firstObject;   // 主窗口（keyWindow 已废弃）
     if (!win || !win.rootViewController) return;
     static char kL, kR;
     if (!objc_getAssociatedObject(win, &kL)) {
         UIScreenEdgePanGestureRecognizer *l = [[UIScreenEdgePanGestureRecognizer alloc]
             initWithTarget:bxProxy action:@selector(bxEdgeLeft:)];
         l.edges = UIRectEdgeLeft;
-        l.delegate = (id<UIGestureRecognizerDelegate>)bxProxy;
         [win addGestureRecognizer:l];
         objc_setAssociatedObject(win, &kL, l, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         bx_log(@"[SwipeBackApp] installed LEFT edge recognizer");
@@ -94,7 +94,6 @@ static void bxInstallEdges(void) {
         UIScreenEdgePanGestureRecognizer *r = [[UIScreenEdgePanGestureRecognizer alloc]
             initWithTarget:bxProxy action:@selector(bxEdgeRight:)];
         r.edges = UIRectEdgeRight;
-        r.delegate = (id<UIGestureRecognizerDelegate>)bxProxy;
         [win addGestureRecognizer:r];
         objc_setAssociatedObject(win, &kR, r, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         bx_log(@"[SwipeBackApp] installed RIGHT edge recognizer");
