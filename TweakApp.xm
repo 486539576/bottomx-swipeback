@@ -53,6 +53,54 @@ static void bxOnSettingsChanged(CFNotificationCenterRef center, void *observer,
     bx_loadPrefs();
 }
 
+// ---- 系统标准边缘滑动手势识别器（与系统边缘返回同机制，最可靠）----
+static void bxTriggerBack(UIView *view);   // 前向声明
+@interface BXEdgeProxy : NSObject
+@end
+@implementation BXEdgeProxy
+- (void)bxEdgeLeft:(UIScreenEdgePanGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateRecognized) {
+        UIWindow *w = (UIWindow *)g.view;
+        dispatch_async(dispatch_get_main_queue(), ^{ bxTriggerBack(w); });
+        bx_log(@"[SwipeBackApp] edge(recognizer) LEFT -> back");
+    }
+}
+- (void)bxEdgeRight:(UIScreenEdgePanGestureRecognizer *)g {
+    if (g.state == UIGestureRecognizerStateRecognized) {
+        UIWindow *w = (UIWindow *)g.view;
+        dispatch_async(dispatch_get_main_queue(), ^{ bxTriggerBack(w); });
+        bx_log(@"[SwipeBackApp] edge(recognizer) RIGHT -> back");
+    }
+}
+@end
+
+static BXEdgeProxy *bxProxy = nil;
+
+static void bxInstallEdges(void) {
+    if (!bx_active()) return;
+    UIWindow *win = [UIApplication sharedApplication].keyWindow;
+    if (!win || !win.rootViewController) return;
+    static char kL, kR;
+    if (!objc_getAssociatedObject(win, &kL)) {
+        UIScreenEdgePanGestureRecognizer *l = [[UIScreenEdgePanGestureRecognizer alloc]
+            initWithTarget:bxProxy action:@selector(bxEdgeLeft:)];
+        l.edges = UIRectEdgeLeft;
+        l.delegate = (id<UIGestureRecognizerDelegate>)bxProxy;
+        [win addGestureRecognizer:l];
+        objc_setAssociatedObject(win, &kL, l, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        bx_log(@"[SwipeBackApp] installed LEFT edge recognizer");
+    }
+    if (!objc_getAssociatedObject(win, &kR)) {
+        UIScreenEdgePanGestureRecognizer *r = [[UIScreenEdgePanGestureRecognizer alloc]
+            initWithTarget:bxProxy action:@selector(bxEdgeRight:)];
+        r.edges = UIRectEdgeRight;
+        r.delegate = (id<UIGestureRecognizerDelegate>)bxProxy;
+        [win addGestureRecognizer:r];
+        objc_setAssociatedObject(win, &kR, r, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        bx_log(@"[SwipeBackApp] installed RIGHT edge recognizer");
+    }
+}
+
 // ---- 找到当前最上层可返回的控制器 ----
 static UIViewController *bxTopViewController(UIViewController *root) {
     UIViewController *t = root;
@@ -189,5 +237,18 @@ static void bxTriggerBack(UIView *view) {
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                     bxOnSettingsChanged, CFSTR("com.colorblack.bottomx.settings.changed"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    bx_log(@"[SwipeBackApp] LOADED (edge-swipe back)");
+
+    // 系统标准边缘滑动手势：App 进入前台、主窗口就绪后安装到 keyWindow
+    bxProxy = [[BXEdgeProxy alloc] init];
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidBecomeActiveNotification
+                                                      object:nil queue:nil
+                                                  usingBlock:^(NSNotification *note) {
+        // 多试几次，等 rootViewController 就绪
+        for (int i = 1; i <= 4; i++) {
+            double delay = 0.6 * i;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{ bxInstallEdges(); });
+        }
+    }];
+    bx_log(@"[SwipeBackApp] LOADED (edge-swipe back, recognizer+sendEvent)");
 }
