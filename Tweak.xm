@@ -16,6 +16,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #import <notify.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #import <os/log.h>
 
 static void bx_log(NSString *fmt, ...) {
