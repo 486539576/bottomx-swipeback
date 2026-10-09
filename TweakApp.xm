@@ -36,8 +36,8 @@ static void bx_loadPrefs(void) {
         bx_area          = d[@"SwipeBackArea"] ?: @"Both";
         bx_backSens      = [d[@"SwipeBackBackSensitivity"] floatValue];
         if (bx_backSens < 0.05f || bx_backSens > 1.f) bx_backSens = 0.6f;
-        bx_log(@"[SwipeBackApp] prefs: master=%d swipe=%d area=%@ sens=%.2f",
-               bx_masterEnabled, bx_swipeEnabled, bx_area, bx_backSens);
+        bx_log(@"[SwipeBackApp] prefs: master=%d swipe=%d area=%s sens=%.2f",
+               bx_masterEnabled, bx_swipeEnabled, bx_area.UTF8String, bx_backSens);
     } @catch (...) {}
 }
 
@@ -164,7 +164,7 @@ static void bxTriggerBack(UIView *view) {
     if (okArea && okDir) {
         objc_setAssociatedObject(self, @selector(bxTouchDone), @(YES), OBJC_ASSOCIATION_RETAIN);
         bxTriggerBack(self);
-        bx_log(@"[SwipeBackApp] edge swipe -> back (area=%@ dir=%s)", bx_area,
+        bx_log(@"[SwipeBackApp] edge swipe -> back (area=%s dir=%s)", bx_area.UTF8String,
                (inLeft ? "right" : "left"));
     }
 }
