@@ -21,13 +21,19 @@ INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = HomeTapBackSwipe
+TWEAK_NAME = HomeTapBackSwipe SwipeBackApp
 
 HomeTapBackSwipe_FILES    = Tweak.xm
 HomeTapBackSwipe_CFLAGS   = -fobjc-arc 
 HomeTapBackSwipe_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox
 HomeTapBackSwipe_LDFLAGS = -Wl,-no_dead_strip_inits_and_terms -Wl,-install_name,@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib
 HomeTapBackSwipe_LIBRARIES  = substrate
+
+SwipeBackApp_FILES    = TweakApp.xm
+SwipeBackApp_CFLAGS   = -fobjc-arc
+SwipeBackApp_FRAMEWORKS = UIKit Foundation
+SwipeBackApp_LDFLAGS = -Wl,-no_dead_strip_inits_and_terms -Wl,-install_name,@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.dylib
+SwipeBackApp_LIBRARIES  = substrate
 # 真 ld64（cctools）能自行处理 -arch/-platform_version 等，无需额外 LDFLAGS
 
 include $(THEOS_MAKE_PATH)/tweak.mk

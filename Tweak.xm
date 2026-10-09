@@ -87,8 +87,16 @@ static id bx_sharedInstanceForClass(Class cls) {
     return nil;
 }
 
-// 兜底：自创返回通知（仅当原版返回链路不可用时）
-static void bx_sendBackRequestFallback(void) {
+// 核心：角落上滑时发"返回上一级"通知，由 App 层(SwipeBackApp)在主线程执行返回
+// （不再依赖原版 HomeTapBackApp 的 senderID 校验，改用自己的 App 层返回链路）
+static void bx_sendBackNotify(void) {
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.doubao.swipeback.back"), NULL, NULL, true);
+    bx_log(@"[SwipeBack] back-notify posted com.doubao.swipeback.back");
+}
+
+// 兜底：同时发原版 hometap 通知（兼容原版 HomeTapBackApp，若它能处理）
+static void bx_sendOriginalBackNotify(void) {
     NSMutableDictionary *info = [NSMutableDictionary dictionary];
     info[@"point"]    = @{ @"x": @0.0, @"y": @0.0 };
     info[@"bundle"]   = @"";
@@ -99,21 +107,7 @@ static void bx_sendBackRequestFallback(void) {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                          (__bridge CFStringRef)kNotifyHomeTap, NULL,
                                          (__bridge CFDictionaryRef)info, true);
-    bx_log(@"[SwipeBack] FALLBACK back-request posted -> %@", kNotifyHomeTap);
-}
-
-// 核心：触发原版 Bottom-x 的返回链路（Home 键单按派发，App 才认）
-static void bx_triggerOriginalBack(void) {
-    bx_log(@"[SwipeBack] ACTION original home-tap back");
-    Class sbui = NSClassFromString(@"SBUIController");
-    id c = bx_sharedInstanceForClass(sbui);
-    SEL s = NSSelectorFromString(@"handleHomeButtonSinglePressUp");
-    if (c && [c respondsToSelector:s]) {
-        ((void (*)(id, SEL))[c methodForSelector:s])(c, s);
-        return;
-    }
-    // 回退到自创通知
-    bx_sendBackRequestFallback();
+    bx_log(@"[SwipeBack] original back-notify posted -> %@", kNotifyHomeTap);
 }
 
 // 返回桌面（二次确认）：优先插件自身 go-home，回退系统 home 派发
@@ -215,6 +209,25 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
     }
 }
 
+// ---- 是否锁屏 / 是否有前台 App（用于只在 App 前台时拦截上滑，桌面/锁屏放行）----
+static BOOL bx_isLocked(void) {
+    Class lm = NSClassFromString(@"SBLockScreenManager");
+    id inst = bx_sharedInstanceForClass(lm);
+    if (inst) {
+        if ([inst respondsToSelector:@selector(isUILocked)]) return [(id)inst isUILocked];
+        if ([inst respondsToSelector:@selector(isLocked)])    return [(id)inst isLocked];
+    }
+    return NO;
+}
+
+static BOOL bx_hasForegroundApp(void) {
+    // SB 的 frontMostApplication 返回当前前台 App；nil 表示在主屏（无前台 App）
+    @try {
+        id app = [[UIApplication sharedApplication] valueForKey:@"frontMostApplication"];
+        return app != nil;
+    } @catch (NSException *e) { return YES; }
+}
+
 #pragma mark - 钩子：拦截系统 Home 手势
 %hook SBHomeGesturePanGestureRecognizer
 
@@ -238,6 +251,12 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
     CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
     CGPoint cur   = (t && gr.view) ? [t locationInView:gr.view] : start;
 
+    // 桌面/锁屏（无前台 App）：放行系统上滑，不进入二次确认
+    if (!bx_hasForegroundApp() || bx_isLocked()) {
+        %orig;
+        return;
+    }
+
     if (g_enabled && !handled.boolValue && start.x >= 0) {
         CGFloat dy = start.y - cur.y;
         CGFloat backThresh = bx_lerp(45.f, 12.f, g_backSens);   // 角落上滑位移阈值（灵敏度高→滑一点就算）
@@ -254,7 +273,8 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
                 }
                 [c startPendingHome];
                 bx_swallowGesture(gr);             // 阻止系统回桌面 / 带动 App
-                bx_triggerOriginalBack();          // 复用原版返回链路 -> 返回上一级
+                bx_sendBackNotify();               // 通知 App 层执行返回上一级
+                bx_sendOriginalBackNotify();       // 兼容原版 HomeTapBackApp
                 return;                            // 不 %orig
             }
         }
