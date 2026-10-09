@@ -1,16 +1,18 @@
 // ============================================================================
-//  Bottom-x 左右滑动返回 (HomeTapBackSwipe)  Tweak.xm  —— v0.4.0
+//  Bottom-x 左右滑动返回 (HomeTapBackSwipe)  Tweak.xm  —— v0.4.3
 // ----------------------------------------------------------------------------
-//  作用：
-//    - 不再拦截系统上滑手势（上滑中间=后台、上滑到顶=回桌面由系统处理）。
-//    - "左右两侧滑动返回"由 App 层(SwipeBackApp)通过 UIWindow 边缘触摸检测实现。
-//    - 本层只负责：监听 App 层在"到达 App 最上级"时发来的回桌面请求，
-//      用最可靠的方式真正返回桌面（复用原版 dispatchGoHome / 系统正规回主屏）。
+//  SpringBoard 层（系统级，注入一定成功）：
+//    - 在屏幕底部左右角检测"横向滑动"（左角向右滑 / 右角向左滑），
+//      触发后发 back 通知，由 App 层(SwipeBackApp)执行返回上一级。
+//    - 到 App 最上级：App 层会发回桌面请求，本层用最可靠方式返回桌面
+//      （复用原版 dispatchGoHome / 系统正规回主屏）。
+//    - 上滑中间=后台、上滑到顶=回桌面 仍由系统处理，不拦截。
 // ============================================================================
 
 #import <UIKit/UIKit.h>
 #import <notify.h>
 #import <objc/message.h>
+#import <objc/runtime.h>
 #import <os/log.h>
 
 static void bx_log(NSString *fmt, ...) {
@@ -24,15 +26,17 @@ static void bx_log(NSString *fmt, ...) {
 static NSString *const kSwipeBackEnabled        = @"SwipeBackEnabled";
 static NSString *const kSwipeBackArea           = @"SwipeBackArea";
 static NSString *const kSwipeBackBackSens       = @"SwipeBackBackSensitivity";
-static NSString *const kSwipeBackMiddleSens     = @"SwipeBackMiddleSensitivity";
 static NSString *const kSwipeBackHomeSens       = @"SwipeBackHomeSensitivity";
-static NSString *const kSwipeBackHomeConfirm    = @"SwipeBackHomeConfirm";
-static NSString *const kSwipeBackMiddleSwitcher = @"SwipeBackMiddleSwitcher";
 
+static NSString *const kNotifyHomeTap = @"com.hometapback.hometap";
 static NSString *const kNotifyGoHome  = @"com.hometapback.gohome";
 
-static BOOL        g_enabled        = NO;
-static CGFloat     g_homeSens       = 0.6f;
+typedef NS_ENUM(NSInteger, BXSwipeArea) { BXSwipeAreaLeft=0, BXSwipeAreaRight=1, BXSwipeAreaBoth=2 };
+
+static BOOL        g_enabled  = NO;
+static BXSwipeArea g_area     = BXSwipeAreaBoth;
+static CGFloat     g_backSens = 0.6f;
+static CGFloat     g_homeSens = 0.6f;
 
 static CGFloat bx_lerp(CGFloat a, CGFloat b, CGFloat t) {
     if (t < 0) t = 0; if (t > 1) t = 1;
@@ -43,6 +47,12 @@ static void bx_loadPrefs(void) {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.colorblack.bottomx"];
     [d synchronize];
     g_enabled = [d boolForKey:kSwipeBackEnabled];
+    NSString *area = [d stringForKey:kSwipeBackArea] ?: @"Both";
+    if      ([area isEqualToString:@"Left"])  g_area = BXSwipeAreaLeft;
+    else if ([area isEqualToString:@"Right"]) g_area = BXSwipeAreaRight;
+    else                                      g_area = BXSwipeAreaBoth;
+    g_backSens = bx_lerp(0, 1, [d floatForKey:kSwipeBackBackSens]);
+    if (g_backSens <= 0) g_backSens = 0.6f;
     g_homeSens = bx_lerp(0, 1, [d floatForKey:kSwipeBackHomeSens]);
     if (g_homeSens <= 0) g_homeSens = 0.6f;
 }
@@ -63,10 +73,69 @@ static id bx_sharedInstanceForClass(Class cls) {
     return nil;
 }
 
-// 返回桌面：按最可靠方式依次尝试，确保至少一个生效
+// 前台 App 判断 / 锁屏判断
+static BOOL bx_isLocked(void) {
+    Class lm = NSClassFromString(@"SBLockScreenManager");
+    id inst = bx_sharedInstanceForClass(lm);
+    if (inst) {
+        if ([inst respondsToSelector:@selector(isUILocked)])
+            return ((BOOL (*)(id, SEL))objc_msgSend)(inst, @selector(isUILocked));
+        if ([inst respondsToSelector:@selector(isLocked)])
+            return ((BOOL (*)(id, SEL))objc_msgSend)(inst, @selector(isLocked));
+    }
+    return NO;
+}
+static BOOL bx_hasForegroundApp(void) {
+    @try {
+        id app = [[UIApplication sharedApplication] valueForKey:@"frontMostApplication"];
+        return app != nil;
+    } @catch (NSException *e) { return YES; }
+}
+
+// 起点是否在底部左右角（横向滑动触发区）
+static BOOL bx_inCorner(CGPoint start) {
+    if (!g_enabled) return NO;
+    CGRect b = [UIScreen mainScreen].bounds;
+    CGFloat zoneW = bx_lerp(0.10f, 0.25f, g_backSens);   // 角宽度（灵敏度）
+    CGFloat zoneH = bx_lerp(90.f, 170.f, g_backSens);    // 底部高度 pt（灵敏度）
+    BOOL inBottom = start.y >= b.size.height - zoneH;
+    BOOL inLeft   = inBottom && start.x <= b.size.width * zoneW;
+    BOOL inRight  = inBottom && start.x >= b.size.width * (1.0f - zoneW);
+    return (g_area == BXSwipeAreaBoth)  ? (inLeft || inRight)
+         : (g_area == BXSwipeAreaLeft)  ? inLeft
+                                        : inRight;
+}
+
+// 吞掉手势（避免系统把横向滑动当别的）
+static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
+    if (!gr) return;
+    @try {
+        [gr setValue:@(UIGestureRecognizerStateFailed) forKey:@"state"];
+    } @catch (NSException *e) {}
+}
+
+// 发"返回上一级"通知（App 层执行返回）
+static void bx_sendBackNotify(void) {
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFSTR("com.doubao.swipeback.back"), NULL, NULL, true);
+}
+// 兜底：发原版 hometap 通知
+static void bx_sendOriginalBackNotify(void) {
+    NSMutableDictionary *info = [NSMutableDictionary dictionary];
+    info[@"point"]    = @{ @"x": @0.0, @"y": @0.0 };
+    info[@"bundle"]   = @"";
+    info[@"senderID"] = @((uint64_t)(((uint64_t)arc4random() << 32) | arc4random()));
+    info[@"tapID"]    = @((uint64_t)(((uint64_t)arc4random() << 32) | arc4random()));
+    info[@"sequence"] = @1;
+    info[@"stamp"]    = @((uint64_t)([NSProcessInfo processInfo].systemUptime * 1000.0));
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         (__bridge CFStringRef)kNotifyHomeTap, NULL,
+                                         (__bridge CFDictionaryRef)info, true);
+}
+
+// 返回桌面（App 最上级再滑动时）：按最可靠方式依次尝试
 static void bx_goHome(void) {
     bx_log(@"[SwipeBack] ACTION go-home");
-    // 1) 原版 BXHomeDispatcher.dispatchGoHome（最贴近原插件回桌面，小白条点击可靠）
     @try {
         Class disp = NSClassFromString(@"BXHomeDispatcher");
         id d = bx_sharedInstanceForClass(disp);
@@ -78,7 +147,6 @@ static void bx_goHome(void) {
             return;
         }
     } @catch (...) {}
-    // 2) SBMainWorkspace.transitionToHomeScreenWithCompletion:（iOS 正规回主屏）
     @try {
         Class w = NSClassFromString(@"SBMainWorkspace");
         id ws = bx_sharedInstanceForClass(w);
@@ -89,7 +157,6 @@ static void bx_goHome(void) {
             return;
         }
     } @catch (...) {}
-    // 3) SBUIController.handleMenuButtonTap（Home 键 tap）
     @try {
         Class sbui = NSClassFromString(@"SBUIController");
         id c = bx_sharedInstanceForClass(sbui);
@@ -100,7 +167,6 @@ static void bx_goHome(void) {
             return;
         }
     } @catch (...) {}
-    // 4) 系统 Home 键单按派发
     @try {
         Class sbui = NSClassFromString(@"SBUIController");
         id c = bx_sharedInstanceForClass(sbui);
@@ -113,13 +179,72 @@ static void bx_goHome(void) {
             }
         }
     } @catch (...) {}
-    // 5) 发原版 gohome 通知兜底
     @try {
         notify_post([kNotifyGoHome UTF8String]);
         notify_post("com.colorblack.bottomx.gohome");
         bx_log(@"[SwipeBack] go-home via notify");
     } @catch (...) {}
 }
+
+#pragma mark - 钩子：检测底部左右角横向滑动
+%hook SBHomeGesturePanGestureRecognizer
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    %orig;
+    UIPanGestureRecognizer *gr = (UIPanGestureRecognizer *)self;
+    UITouch *t = touches.anyObject;
+    if (t && gr.view) {
+        CGPoint p = [t locationInView:gr.view];
+        objc_setAssociatedObject(self, @selector(bxSwipeStart),
+                                 [NSValue valueWithCGPoint:p], OBJC_ASSOCIATION_RETAIN);
+    }
+    objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(NO), OBJC_ASSOCIATION_RETAIN);
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UIPanGestureRecognizer *gr = (UIPanGestureRecognizer *)self;
+    UITouch *t = touches.anyObject;
+    NSValue *sv = objc_getAssociatedObject(self, @selector(bxSwipeStart));
+    NSNumber *handled = objc_getAssociatedObject(self, @selector(bxSwipeHandled));
+    CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
+    CGPoint cur   = (t && gr.view) ? [t locationInView:gr.view] : start;
+
+    // 桌面/锁屏：放行，不处理
+    if (!bx_hasForegroundApp() || bx_isLocked()) { %orig; return; }
+
+    if (g_enabled && !handled.boolValue && start.x >= 0) {
+        if (bx_inCorner(start)) {
+            CGRect b = [UIScreen mainScreen].bounds;
+            CGFloat zoneW = bx_lerp(0.10f, 0.25f, g_backSens);
+            BOOL inLeft  = start.x <= b.size.width * zoneW;
+            BOOL inRight = start.x >= b.size.width * (1.0f - zoneW);
+            CGFloat dx = cur.x - start.x;
+            CGFloat thresh = bx_lerp(42.f, 14.f, g_backSens);   // 横向位移阈值（灵敏度高→滑一点就触发）
+            BOOL dirOK = (inLeft && dx > thresh) || (inRight && dx < -thresh);
+            if (dirOK) {
+                objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(YES), OBJC_ASSOCIATION_RETAIN);
+                bx_swallowGesture(gr);          // 避免系统把横滑当别的
+                bx_sendBackNotify();            // 通知 App 层执行返回；最上级则自动回桌面
+                bx_sendOriginalBackNotify();    // 兼容原版 HomeTapBackApp
+                bx_log(@"[SwipeBack] horizontal swipe -> back (left=%d dir=%s)",
+                       inLeft, (inLeft ? "right" : "left"));
+                return;                         // 不 %orig
+            }
+        }
+    }
+    %orig;
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(NO), OBJC_ASSOCIATION_RETAIN);
+    %orig;
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(NO), OBJC_ASSOCIATION_RETAIN);
+    %orig;
+}
+%end
 
 // 收到 App 层"已到最上级、请回桌面"通知 -> 执行返回桌面
 static void bxOnGoHomeNotify(CFNotificationCenterRef center, void *observer,
@@ -137,8 +262,8 @@ static void bxOnGoHomeNotify(CFNotificationCenterRef center, void *observer,
 %ctor {
     @try {
         bx_loadPrefs();
-        bx_log(@"[SwipeBack] LOADED into SpringBoard (回桌面监听), enabled=%d homeSens=%.2f",
-               g_enabled, g_homeSens);
+        bx_log(@"[SwipeBack] LOADED into SpringBoard, enabled=%d area=%ld backSens=%.2f",
+               g_enabled, (long)g_area, g_backSens);
     } @catch (...) {}
 
     // 监听回桌面请求（我的通知 + 原版通知双保险）
