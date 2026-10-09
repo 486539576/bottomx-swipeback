@@ -93,7 +93,7 @@ Author: Color Black
 Section: Tweaks
 Depends: mobilesubstrate | ellekit, preferenceloader, firmware (>= 14.0)
 Architecture: iphoneos-arm64e
-Version: 0.2.98
+Version: 0.3.2
 Installed-Size: 3100
 EOF
 echo "2.0" > "$STAGE/debian-binary"
