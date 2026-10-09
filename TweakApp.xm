@@ -54,7 +54,8 @@ static void bxOnSettingsChanged(CFNotificationCenterRef center, void *observer,
     bx_loadPrefs();
 }
 
-// 收到 SpringBoard 层"底部左右角横向滑动"通知 -> 主线程执行返回上一级
+// 收到 SpringBoard 层"底部白条点击返回"通知 -> 主线程执行返回上一级
+static void bxTriggerBack(UIView *view);   // 前向声明
 static void bxOnBackNotify(CFNotificationCenterRef center, void *observer,
                            CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     bx_log(@"[SwipeBackApp] received SB back-notify");
@@ -64,8 +65,7 @@ static void bxOnBackNotify(CFNotificationCenterRef center, void *observer,
     });
 }
 
-// ---- 系统标准边缘滑动手势识别器（与系统边缘返回同机制，最可靠）----
-static void bxTriggerBack(UIView *view);   // 前向声明
+// ---- 系统标准边缘滑动手势识别器（与系统边缘返回同机制）----
 @interface BXEdgeProxy : NSObject
 @end
 @implementation BXEdgeProxy
