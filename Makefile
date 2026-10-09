@@ -14,26 +14,18 @@ TARGET := iphone:clang:latest:14.0
 # 本工程通过 GitHub Actions 云端 Mac 构建（Linux 编不出新 ABI arm64e）。
 ARCHS  = arm64e
 
-# 本 dylib 通过 SpringBoard 过滤加载，用于拦截并重解释系统底部上滑手势；
-# "返回上一级"仍复用 App 侧的 HomeTapBackApp.dylib（需已安装）。
-# install 目标进程仅用于方便调试，实际 deb 安装到 DynamicLibraries。
+# 本 dylib 通过 SpringBoard 过滤加载，把"小白条可点击区域"加宽，
+# 检测到单击后发原版返回通知，由原版 HomeTapBackApp.dylib 执行返回。
 INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = HomeTapBackSwipe SwipeBackApp
+TWEAK_NAME = HomeTapBackSwipe
 
 HomeTapBackSwipe_FILES    = Tweak.xm
 HomeTapBackSwipe_CFLAGS   = -fobjc-arc 
 HomeTapBackSwipe_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox
 HomeTapBackSwipe_LDFLAGS = -Wl,-no_dead_strip_inits_and_terms -Wl,-install_name,@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib
 HomeTapBackSwipe_LIBRARIES  = substrate
-
-SwipeBackApp_FILES    = TweakApp.xm
-SwipeBackApp_CFLAGS   = -fobjc-arc
-SwipeBackApp_FRAMEWORKS = UIKit Foundation
-SwipeBackApp_LDFLAGS = -Wl,-no_dead_strip_inits_and_terms -Wl,-install_name,@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.dylib
-SwipeBackApp_LIBRARIES  = substrate
-# 真 ld64（cctools）能自行处理 -arch/-platform_version 等，无需额外 LDFLAGS
 
 include $(THEOS_MAKE_PATH)/tweak.mk
