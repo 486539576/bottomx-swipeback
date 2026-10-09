@@ -363,10 +363,18 @@ static void bxOnGoHomeNotify(CFNotificationCenterRef center, void *observer,
                g_enabled, (long)g_area, g_backSens, g_midSens, g_homeSens);
     } @catch (...) {}
 
-    // 监听 App 层"已到最上级"的回桌面请求
+    // 监听回桌面请求（我的通知 + 原版通知双保险）
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
                                     bxOnGoHomeNotify, CFSTR("com.doubao.swipeback.gohome"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    bxOnGoHomeNotify, CFSTR("com.hometapback.gohome"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
+    static uint32_t gohomeToken = 0;
+    notify_register_dispatch("com.doubao.swipeback.gohome", &gohomeToken,
+                             dispatch_get_main_queue(), ^(int t) { bx_goHome(); });
+    notify_register_dispatch("com.hometapback.gohome", &gohomeToken,
+                             dispatch_get_main_queue(), ^(int t) { bx_goHome(); });
 
     @try {
         NSString *marker = [NSString stringWithFormat:@"%@ pid=%d\n", [NSDate date], (int)getpid()];
