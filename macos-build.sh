@@ -65,25 +65,31 @@ for sl,sz in slices:
 open(p,'wb').write(bytes(d))
 PYEOF
 
-# ---- 4. 组装 roothide deb（复制原插件素材 + 新 dylib + 设置）----
+# ---- 4. 组装 roothide deb（从 original.deb 解原版素材 + 新 dylib + 我们的设置/图标）----
 STAGE=$(mktemp -d)
 mkdir -p "$STAGE/data" "$STAGE/control"
-# 素材统一取自工程内的 deb_data/（含原插件 dylib/plist 与已改好的设置）
-cp -r deb_data/* "$STAGE/data/"
+# 从 original.deb 解出原版 Library 结构（原版 dylib/plist + 设置 bundle）
+dpkg-deb -x original.deb "$STAGE/data/" 2>/dev/null || {
+  ar x original.deb && xz -dc data.tar.lzma | tar -x -C "$STAGE/data/"
+}
 # 覆盖为本次新编译的 dylib（B-key arm64e）
 cp "$DYLIB" "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib"
 chmod 755 "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib"
+# 覆盖我们的设置项(Root.plist 含 3 灵敏度)、西瓜图标、Swipe 的 filter plist
+cp Root.plist "$STAGE/data/Library/PreferenceBundles/Bottom-xPrefs.bundle/Root.plist"
+cp icon.png icon@2x.png icon@3x.png "$STAGE/data/Library/PreferenceBundles/Bottom-xPrefs.bundle/"
+cp HomeTapBackSwipe.plist "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.plist"
 
 cat > "$STAGE/control/control" <<'EOF'
 Package: com.colorblack.bottomx
 Name: Bottom-x roothide
-Description: 点击底部小白条逐级返回。新增左下/右下角上滑返回，含触发区域/灵敏度/二次上滑确认/中间触发后台设置项。macOS(Xcode) B-key arm64e 编译版。
+Description: 点击底部小白条逐级返回；新增左下/右下角上滑=返回上一级、上滑到中间=后台、二次上滑=回桌面。返回复用原版链路，含三个独立灵敏度(角落/中间/回桌面)。arm64e B-key 编译。
 Maintainer: Color Black
 Author: Color Black
 Section: Tweaks
 Depends: mobilesubstrate | ellekit, preferenceloader, firmware (>= 14.0)
 Architecture: iphoneos-arm64e
-Version: 1.0.0
+Version: 0.2.97
 Installed-Size: 3080
 EOF
 echo "2.0" > "$STAGE/debian-binary"
