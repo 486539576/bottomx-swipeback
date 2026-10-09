@@ -42,7 +42,9 @@ static void bx_loadPrefs(void) {
 }
 
 static BOOL bx_active(void) {
-    return bx_masterEnabled && bx_swipeEnabled;
+    // 左右滑动返回只由"启用左右滑动返回"(SwipeBackEnabled) 这一个开关控制，
+    // 不依赖原版 MasterEnabled（用户不必开原版总开关）。
+    return bx_swipeEnabled;
 }
 
 static void bxOnSettingsChanged(CFNotificationCenterRef center, void *observer,
@@ -125,47 +127,48 @@ static void bxTriggerBack(UIView *view) {
 }
 
 #pragma mark - 左右边缘滑动返回检测（App 层，不抢系统上滑）
+// iOS 触摸事件经 UIWindow -sendEvent: 分发，触摸本身被交给 hit-test 到的子视图，
+// UIWindow 的 touchesBegan/Moved 不会被调用。因此在 sendEvent: 里检测边缘滑动最可靠。
 %hook UIWindow
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+- (void)sendEvent:(UIEvent *)event {
     %orig;
     if (!bx_active()) return;
-    UITouch *t = touches.anyObject;
-    if (t) {
-        CGPoint p = [t locationInView:self];
-        objc_setAssociatedObject(self, @selector(bxTouchStart),
-                                 [NSValue valueWithCGPoint:p], OBJC_ASSOCIATION_RETAIN);
-        objc_setAssociatedObject(self, @selector(bxTouchDone), @(NO), OBJC_ASSOCIATION_RETAIN);
-    }
-}
+    NSSet *touches = event.allTouches;
+    for (UITouch *t in touches) {
+        UITouchPhase ph = t.phase;
+        if (ph == UITouchPhaseBegan) {
+            CGPoint p = [t locationInView:self];
+            objc_setAssociatedObject(t, @selector(bxTouchStart),
+                                     [NSValue valueWithCGPoint:p], OBJC_ASSOCIATION_RETAIN);
+            objc_setAssociatedObject(t, @selector(bxTouchDone), @(NO), OBJC_ASSOCIATION_RETAIN);
+        } else if (ph == UITouchPhaseMoved) {
+            NSValue *sv = objc_getAssociatedObject(t, @selector(bxTouchStart));
+            NSNumber *dn = objc_getAssociatedObject(t, @selector(bxTouchDone));
+            if (!sv || dn.boolValue) continue;
+            CGPoint start = sv.CGPointValue;
+            CGPoint cur   = [t locationInView:self];
+            CGRect  b     = self.bounds;
+            if (b.size.width <= 0) continue;
 
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    %orig;
-    if (!bx_active()) return;
-    NSValue *sv = objc_getAssociatedObject(self, @selector(bxTouchStart));
-    NSNumber *dn = objc_getAssociatedObject(self, @selector(bxTouchDone));
-    if (!sv || dn.boolValue) return;
-    UITouch *t = touches.anyObject;
-    if (!t) return;
-    CGPoint start = sv.CGPointValue;
-    CGPoint cur   = [t locationInView:self];
-    CGRect  b     = self.bounds;
-    if (b.size.width <= 0) return;
-
-    CGFloat zoneW  = MIN(b.size.width * (0.08f + 0.12f * bx_backSens), 140.f); // 边缘宽度(灵敏度)
-    CGFloat thresh = 18.f + 34.f * (1.0f - bx_backSens);                        // 滑动距离阈值(灵敏度)
-    CGFloat dx     = cur.x - start.x;
-    BOOL inLeft    = start.x <= zoneW;
-    BOOL inRight   = start.x >= b.size.width - zoneW;
-    BOOL okArea = [bx_area isEqualToString:@"Left"] ? inLeft
-                : [bx_area isEqualToString:@"Right"] ? inRight
-                : (inLeft || inRight);
-    BOOL okDir = (inLeft && dx > thresh) || (inRight && dx < -thresh);
-    if (okArea && okDir) {
-        objc_setAssociatedObject(self, @selector(bxTouchDone), @(YES), OBJC_ASSOCIATION_RETAIN);
-        bxTriggerBack(self);
-        bx_log(@"[SwipeBackApp] edge swipe -> back (area=%s dir=%s)", bx_area.UTF8String,
-               (inLeft ? "right" : "left"));
+            CGFloat zoneW  = MIN(b.size.width * (0.08f + 0.12f * bx_backSens), 140.f); // 边缘宽度(灵敏度)
+            CGFloat thresh = 18.f + 34.f * (1.0f - bx_backSens);                        // 滑动距离阈值(灵敏度)
+            CGFloat dx     = cur.x - start.x;
+            BOOL inLeft    = start.x <= zoneW;
+            BOOL inRight   = start.x >= b.size.width - zoneW;
+            BOOL okArea = [bx_area isEqualToString:@"Left"] ? inLeft
+                        : [bx_area isEqualToString:@"Right"] ? inRight
+                        : (inLeft || inRight);
+            BOOL okDir = (inLeft && dx > thresh) || (inRight && dx < -thresh);
+            if (okArea && okDir) {
+                objc_setAssociatedObject(t, @selector(bxTouchDone), @(YES), OBJC_ASSOCIATION_RETAIN);
+                UIWindow *win = self;
+                dispatch_async(dispatch_get_main_queue(), ^{ bxTriggerBack(win); });
+                bx_log(@"[SwipeBackApp] edge swipe -> back (area=%s dir=%s)", bx_area.UTF8String,
+                       (inLeft ? "right" : "left"));
+                break;
+            }
+        }
     }
 }
 %end
