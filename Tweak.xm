@@ -1,17 +1,15 @@
 // ============================================================================
-//  Bottom-x 上滑返回 (HomeTapBackSwipe)  Tweak.xm  —— 严谨改进版 v0.2.96
+//  Bottom-x 上滑返回 (HomeTapBackSwipe)  Tweak.xm  —— v0.2.97
 // ----------------------------------------------------------------------------
-//  SpringBoard 层重新解释"底部上滑"手势，解决 iOS 原生 Home 手势冲突。
-//
-//  关键改进：拦截时机从 touchesEnded 提前到 touchesMoved
-//  （iOS 系统在手指移动过程中就识别"回桌面/带动App"，touchesEnded 已太晚；
-//   现在手指一上滑就吞掉手势，阻止系统回桌面、App 不被带动）。
-//
-//  新方案（按起点分类）：
-//    A) 起点在触发角落 + 上滑              -> 返回上一级（通知前台 App 执行）
-//    B) 起点在触发角落 + 1.2s 内再次上滑     -> 二次确认返回桌面
-//    C) 起点在屏幕中间 + 上滑到中部         -> 触发后台 (App Switcher)
-//    D) 触发区外 / 未启用                   -> 交给系统原生
+//  修复"角落上滑返回上一级不生效"：
+//    之前自创的返回通知(App 不认随机 senderID)，现改为直接触发原版
+//    BarYHomeTapBackSB 的返回链路(handleHomeButtonSinglePressUp)，让前台 App
+//    用"可返回数据"真正执行返回上一级。
+//  拦截提前到 touchesMoved：手指一上滑就吞掉系统手势，App 不被带动。
+//  新增三个独立灵敏度：
+//    角落返回灵敏度   SwipeBackBackSensitivity    角落大小/上滑位移阈值
+//    中间后台灵敏度   SwipeBackMiddleSensitivity  上滑到多高算触发后台
+//    回桌面灵敏度     SwipeBackHomeSensitivity    二次上滑回桌面的位移阈值
 // ============================================================================
 
 #import <UIKit/UIKit.h>
@@ -30,24 +28,29 @@ static void bx_log(NSString *fmt, ...) {
 #pragma mark - 设置键
 static NSString *const kSwipeBackEnabled        = @"SwipeBackEnabled";
 static NSString *const kSwipeBackArea           = @"SwipeBackArea";
-static NSString *const kSwipeBackSensitivity    = @"SwipeBackSensitivity";
+static NSString *const kSwipeBackBackSens       = @"SwipeBackBackSensitivity";
+static NSString *const kSwipeBackMiddleSens     = @"SwipeBackMiddleSensitivity";
+static NSString *const kSwipeBackHomeSens       = @"SwipeBackHomeSensitivity";
 static NSString *const kSwipeBackHomeConfirm    = @"SwipeBackHomeConfirm";
 static NSString *const kSwipeBackMiddleSwitcher = @"SwipeBackMiddleSwitcher";
 
-static NSString *const kNotifyHomeTap = @"com.hometapback.hometap";  // SB -> App 请求返回
+static NSString *const kNotifyHomeTap = @"com.hometapback.hometap";
 static NSString *const kNotifyGoHome  = @"com.hometapback.gohome";
 
-typedef NS_ENUM(NSInteger, BXSwipeArea)   { BXSwipeAreaLeft=0, BXSwipeAreaRight=1, BXSwipeAreaBoth=2 };
-typedef NS_ENUM(NSInteger, BXSwipeClass)  { BXSwipeClassNone=0, BXSwipeClassBack=1,
-                                            BXSwipeClassSwitcher=2, BXSwipeClassHome=3 };
+typedef NS_ENUM(NSInteger, BXSwipeArea) { BXSwipeAreaLeft=0, BXSwipeAreaRight=1, BXSwipeAreaBoth=2 };
 
 static BOOL        g_enabled        = NO;
 static BXSwipeArea g_area           = BXSwipeAreaBoth;
-static CGFloat     g_sens           = 0.5f;
+static CGFloat     g_backSens       = 0.6f;
+static CGFloat     g_midSens        = 0.6f;
+static CGFloat     g_homeSens       = 0.6f;
 static BOOL        g_homeConfirm    = YES;
 static BOOL        g_middleSwitcher = YES;
 
-static CGFloat bx_lerp(CGFloat a, CGFloat b, CGFloat t) { return a + (b - a) * t; }
+static CGFloat bx_lerp(CGFloat a, CGFloat b, CGFloat t) {
+    if (t < 0) t = 0; if (t > 1) t = 1;
+    return a + (b - a) * t;
+}
 
 static void bx_loadPrefs(void) {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.colorblack.bottomx"];
@@ -57,10 +60,13 @@ static void bx_loadPrefs(void) {
     if      ([area isEqualToString:@"Left"])  g_area = BXSwipeAreaLeft;
     else if ([area isEqualToString:@"Right"]) g_area = BXSwipeAreaRight;
     else                                      g_area = BXSwipeAreaBoth;
-    CGFloat s = [d floatForKey:kSwipeBackSensitivity];
-    if (s < 0.f) s = 0.f;
-    if (s > 1.f) s = 1.f;
-    g_sens = s;
+    g_backSens  = bx_lerp(0, 1, [d floatForKey:kSwipeBackBackSens]);
+    g_midSens   = bx_lerp(0, 1, [d floatForKey:kSwipeBackMiddleSens]);
+    g_homeSens  = bx_lerp(0, 1, [d floatForKey:kSwipeBackHomeSens]);
+    // 兼容旧单一"灵敏度"键
+    if ([d objectForKey:@"SwipeBackSensitivity"] && ![d objectForKey:kSwipeBackBackSens]) {
+        g_backSens = bx_lerp(0, 1, [d floatForKey:@"SwipeBackSensitivity"]);
+    }
     g_homeConfirm    = [d boolForKey:kSwipeBackHomeConfirm];
     g_middleSwitcher = [d boolForKey:kSwipeBackMiddleSwitcher];
 }
@@ -81,8 +87,8 @@ static id bx_sharedInstanceForClass(Class cls) {
     return nil;
 }
 
-// 返回上一级：darwin 通知请求前台 App 执行返回
-static void bx_sendBackRequest(void) {
+// 兜底：自创返回通知（仅当原版返回链路不可用时）
+static void bx_sendBackRequestFallback(void) {
     NSMutableDictionary *info = [NSMutableDictionary dictionary];
     info[@"point"]    = @{ @"x": @0.0, @"y": @0.0 };
     info[@"bundle"]   = @"";
@@ -93,10 +99,24 @@ static void bx_sendBackRequest(void) {
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                          (__bridge CFStringRef)kNotifyHomeTap, NULL,
                                          (__bridge CFDictionaryRef)info, true);
-    bx_log(@"[SwipeBack] ACTION back-request posted -> %@", kNotifyHomeTap);
+    bx_log(@"[SwipeBack] FALLBACK back-request posted -> %@", kNotifyHomeTap);
 }
 
-// 返回桌面：优先走插件自身 go-home，回退系统 home 派发
+// 核心：触发原版 Bottom-x 的返回链路（Home 键单按派发，App 才认）
+static void bx_triggerOriginalBack(void) {
+    bx_log(@"[SwipeBack] ACTION original home-tap back");
+    Class sbui = NSClassFromString(@"SBUIController");
+    id c = bx_sharedInstanceForClass(sbui);
+    SEL s = NSSelectorFromString(@"handleHomeButtonSinglePressUp");
+    if (c && [c respondsToSelector:s]) {
+        ((void (*)(id, SEL))[c methodForSelector:s])(c, s);
+        return;
+    }
+    // 回退到自创通知
+    bx_sendBackRequestFallback();
+}
+
+// 返回桌面（二次确认）：优先插件自身 go-home，回退系统 home 派发
 static void bx_goHome(void) {
     bx_log(@"[SwipeBack] ACTION go-home (二次确认)");
     Class disp = NSClassFromString(@"BXHomeDispatcher");
@@ -115,7 +135,7 @@ static void bx_goHome(void) {
     else                                      notify_post([kNotifyGoHome UTF8String]);
 }
 
-// 触发后台 (App Switcher)，多候选回退
+// 触发后台 (App Switcher)
 static void bx_triggerAppSwitcher(void) {
     bx_log(@"[SwipeBack] ACTION app-switcher (上滑到中间)");
     NSArray<NSString *> *classes = @[@"SBAppSwitcherController", @"SBMainWorkspace",
@@ -136,12 +156,12 @@ static void bx_triggerAppSwitcher(void) {
     }
 }
 
-// 判定起点是否在触发角落
+// 判定起点是否在触发角落（用角落返回灵敏度）
 static BOOL bx_inCorner(CGPoint start) {
     if (!g_enabled) return NO;
     CGRect b = [UIScreen mainScreen].bounds;
-    CGFloat zoneW = bx_lerp(0.16f, 0.30f, g_sens);
-    CGFloat zoneH = bx_lerp(130.f, 210.f, g_sens);
+    CGFloat zoneW = bx_lerp(0.14f, 0.34f, g_backSens);   // 侧向宽度占比（灵敏度越高角落越宽）
+    CGFloat zoneH = bx_lerp(120.f, 240.f, g_backSens);   // 底部高度 pt（灵敏度越高越高）
     BOOL inBottom = start.y >= b.size.height - zoneH;
     BOOL inLeft   = inBottom && start.x <= b.size.width * zoneW;
     BOOL inRight  = inBottom && start.x >= b.size.width * (1.0f - zoneW);
@@ -154,7 +174,8 @@ static BOOL bx_inCorner(CGPoint start) {
 @interface BXUpSwipeController : NSObject
 + (instancetype)shared;
 - (void)resetPending;
-- (void)startPendingHome;      // 进入"二次确认回桌面"待确认状态
+- (void)startPendingHome;
+- (BOOL)isPendingHome;
 @end
 
 @implementation BXUpSwipeController {
@@ -206,8 +227,7 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
         objc_setAssociatedObject(self, @selector(bxSwipeStart),
                                  [NSValue valueWithCGPoint:p], OBJC_ASSOCIATION_RETAIN);
     }
-    objc_setAssociatedObject(self, @selector(bxSwipeHandled),
-                             @(NO), OBJC_ASSOCIATION_RETAIN);
+    objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(NO), OBJC_ASSOCIATION_RETAIN);
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
@@ -220,20 +240,22 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
 
     if (g_enabled && !handled.boolValue && start.x >= 0) {
         CGFloat dy = start.y - cur.y;
-        if (dy > 10.f) {                        // 确实在向上滑
-            if (bx_inCorner(start)) {           // 起点在角落
+        CGFloat backThresh = bx_lerp(45.f, 12.f, g_backSens);   // 角落上滑位移阈值（灵敏度高→滑一点就算）
+        if (dy > backThresh) {                                   // 确实在向上滑
+            if (bx_inCorner(start)) {
                 objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(YES), OBJC_ASSOCIATION_RETAIN);
                 BXUpSwipeController *c = [BXUpSwipeController shared];
-                if (g_homeConfirm && [c isPendingHome]) {   // 1.2s 内第二次上滑 -> 回桌面
+                CGFloat homeThresh = bx_lerp(50.f, 15.f, g_homeSens); // 二次回桌面位移阈值
+                if (g_homeConfirm && [c isPendingHome] && dy > homeThresh) {
                     [c resetPending];
                     bx_swallowGesture(gr);
                     bx_goHome();
-                    return;                     // 不 %orig，吞掉
+                    return;                        // 不 %orig
                 }
-                [c startPendingHome];           // 第一次 -> 进入待确认
-                bx_swallowGesture(gr);          // 阻止系统回桌面 / 带动 App
-                bx_sendBackRequest();           // 返回上一级
-                return;                         // 不 %orig，吞掉
+                [c startPendingHome];
+                bx_swallowGesture(gr);             // 阻止系统回桌面 / 带动 App
+                bx_triggerOriginalBack();          // 复用原版返回链路 -> 返回上一级
+                return;                            // 不 %orig
             }
         }
     }
@@ -243,22 +265,19 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     UIPanGestureRecognizer *gr = (UIPanGestureRecognizer *)self;
     NSNumber *handled = objc_getAssociatedObject(self, @selector(bxSwipeHandled));
-    // 起点在角落已由 touchesMoved 处理过（返回/回桌面），这里跳过
     if (g_enabled && !handled.boolValue) {
         UITouch *t = touches.anyObject;
         NSValue *sv = objc_getAssociatedObject(self, @selector(bxSwipeStart));
         CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
         CGPoint end   = (t && gr.view) ? [t locationInView:gr.view] : start;
-        CGPoint vel   = CGPointZero;
-        if (gr.view && [gr respondsToSelector:@selector(velocityInView:)])
-            vel = [gr velocityInView:gr.view];
-        // 起点不在角落：判断是否上滑到中间 -> 后台
         CGRect b = [UIScreen mainScreen].bounds;
-        if (start.x >= 0 && end.y <= b.size.height * 0.5f) {
-            if (g_middleSwitcher) {
+        // 起点不在角落：上滑到中间 -> 后台（用中间后台灵敏度）
+        if (start.x >= 0 && !bx_inCorner(start)) {
+            CGFloat midY = bx_lerp(0.55f, 0.30f, g_midSens) * b.size.height;
+            if (end.y <= midY && g_middleSwitcher) {
                 bx_swallowGesture(gr);
                 bx_triggerAppSwitcher();
-                return;                         // 不 %orig
+                return;                            // 不 %orig
             }
         }
     }
@@ -275,11 +294,10 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
 %ctor {
     @try {
         bx_loadPrefs();
-        bx_log(@"[SwipeBack] LOADED into SpringBoard, enabled=%d area=%ld sens=%.2f homeConfirm=%d middleSwitcher=%d",
-               g_enabled, (long)g_area, g_sens, g_homeConfirm, g_middleSwitcher);
+        bx_log(@"[SwipeBack] LOADED into SpringBoard, enabled=%d area=%ld backSens=%.2f midSens=%.2f homeSens=%.2f",
+               g_enabled, (long)g_area, g_backSens, g_midSens, g_homeSens);
     } @catch (...) {}
 
-    // 加载标记文件（一锤定音区分"没加载"和"逻辑 bug"）
     @try {
         NSString *marker = [NSString stringWithFormat:@"%@ pid=%d\n", [NSDate date], (int)getpid()];
         [marker writeToFile:@"/var/mobile/hometapback_loaded.txt" atomically:YES
@@ -287,8 +305,4 @@ static void bx_swallowGesture(UIPanGestureRecognizer *gr) {
         [marker writeToFile:@"/var/jb/var/mobile/hometapback_loaded.txt" atomically:YES
                    encoding:NSUTF8StringEncoding error:nil];
     } @catch (...) {}
-
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                    NULL, NULL, NULL,
-                                    CFNotificationSuspensionBehaviorDeliverImmediately);
 }
