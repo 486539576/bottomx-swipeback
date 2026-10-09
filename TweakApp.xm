@@ -43,9 +43,9 @@ static void bx_loadPrefs(void) {
 }
 
 static BOOL bx_active(void) {
-    // 左右滑动返回只由"启用左右滑动返回"(SwipeBackEnabled) 这一个开关控制，
-    // 不依赖原版 MasterEnabled（用户不必开原版总开关）。
-    return bx_swipeEnabled;
+    // 白条点击返回：由原版总开关 MasterEnabled 控制（用户习惯开总开关）。
+    // SwipeBackEnabled 任一为开也视为启用，兼容之前版本设置。
+    return bx_masterEnabled || bx_swipeEnabled;
 }
 
 static void bxOnSettingsChanged(CFNotificationCenterRef center, void *observer,

@@ -186,60 +186,35 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>上滑返回：在屏幕左下/右下角上滑=返回上一级；返回到App最上级后再上滑=回到桌面；上滑到屏幕中间=呼出后台。</string>
+			<string>点击屏幕底部小白条区域＝返回上一级；返回到 App 最上级后再点＝回到桌面。小白条点击区域已默认加宽（70%），可按需调整。</string>
 			<key>label</key>
-			<string>上滑返回</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.colorblack.bottomx.settings.changed</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<false/>
-			<key>defaults</key>
-			<string>com.colorblack.bottomx</string>
-			<key>key</key>
-			<string>SwipeBackEnabled</string>
-			<key>label</key>
-			<string>启用左右滑动返回</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.colorblack.bottomx.settings.changed</string>
-			<key>cell</key>
-			<string>PSSegmentCell</string>
-			<key>default</key>
-			<string>Both</string>
-			<key>defaults</key>
-			<string>com.colorblack.bottomx</string>
-			<key>key</key>
-			<string>SwipeBackArea</string>
-			<key>label</key>
-			<string>触发区域（在左右哪侧滑动）</string>
-			<key>validTitles</key>
-			<array>
-				<string>左侧</string>
-				<string>右侧</string>
-				<string>两侧</string>
-			</array>
-			<key>validValues</key>
-			<array>
-				<string>Left</string>
-				<string>Right</string>
-				<string>Both</string>
-			</array>
+			<string>小白条点击返回</string>
 		</dict>
 		<dict>
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>三个灵敏度越高越容易触发：
-① 角落返回灵敏度=控制底部角上滑返回的力度（越大越容易返回）
-② 中间后台灵敏度=控制上滑多高触发后台（越大上滑越矮就开后台）
-③ 回桌面灵敏度=控制到最上级后上滑回桌面的力度（越大越容易回桌面）</string>
+			<string>① 点击区域宽度＝小白条可点击范围有多宽（越大越容易点中）；② 反应速度＝多快算一次"点击"，用来区分点击与上滑（越大越灵敏，轻点即触发）。</string>
 			<key>label</key>
-			<string>灵敏度</string>
+			<string>点击区域与反应速度</string>
+		</dict>
+		<dict>
+			<key>PostNotification</key>
+			<string>com.colorblack.bottomx.settings.changed</string>
+			<key>cell</key>
+			<string>PSSliderCell</string>
+			<key>default</key>
+			<real>0.7</real>
+			<key>defaults</key>
+			<string>com.colorblack.bottomx</string>
+			<key>key</key>
+			<string>TapAreaWidth</string>
+			<key>label</key>
+			<string>点击区域宽度</string>
+			<key>max</key>
+			<real>1.0</real>
+			<key>min</key>
+			<real>0.3</real>
 		</dict>
 		<dict>
 			<key>PostNotification</key>
@@ -251,45 +226,9 @@
 			<key>defaults</key>
 			<string>com.colorblack.bottomx</string>
 			<key>key</key>
-			<string>SwipeBackBackSensitivity</string>
+			<string>TapSensitivity</string>
 			<key>label</key>
-			<string>滑动返回灵敏度</string>
-			<key>max</key>
-			<real>1.0</real>
-			<key>min</key>
-			<real>0.1</real>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.colorblack.bottomx.settings.changed</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.5</real>
-			<key>defaults</key>
-			<string>com.colorblack.bottomx</string>
-			<key>key</key>
-			<string>SwipeBackMiddleSensitivity</string>
-			<key>label</key>
-			<string>中间上滑后台灵敏度</string>
-			<key>max</key>
-			<real>1.0</real>
-			<key>min</key>
-			<real>0.1</real>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.colorblack.bottomx.settings.changed</string>
-			<key>cell</key>
-			<string>PSSliderCell</string>
-			<key>default</key>
-			<real>0.6</real>
-			<key>defaults</key>
-			<string>com.colorblack.bottomx</string>
-			<key>key</key>
-			<string>SwipeBackHomeSensitivity</string>
-			<key>label</key>
-			<string>回桌面灵敏度</string>
+			<string>反应速度</string>
 			<key>max</key>
 			<real>1.0</real>
 			<key>min</key>
@@ -299,37 +238,9 @@
 			<key>cell</key>
 			<string>PSGroupCell</string>
 			<key>footerText</key>
-			<string>“回到最上级后上滑回桌面”默认开启：在App最上级再上滑一次就直接回桌面（像点击小白条一样一路返回到底）。</string>
+			<string>返回到 App 最上级后再点一次＝直接回到桌面（像点击小白条一样一路返回到底）。</string>
 			<key>label</key>
 			<string>行为</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.colorblack.bottomx.settings.changed</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.colorblack.bottomx</string>
-			<key>key</key>
-			<string>SwipeBackHomeConfirm</string>
-			<key>label</key>
-			<string>回到最上级后上滑回桌面</string>
-		</dict>
-		<dict>
-			<key>PostNotification</key>
-			<string>com.colorblack.bottomx.settings.changed</string>
-			<key>cell</key>
-			<string>PSSwitchCell</string>
-			<key>default</key>
-			<true/>
-			<key>defaults</key>
-			<string>com.colorblack.bottomx</string>
-			<key>key</key>
-			<string>SwipeBackMiddleSwitcher</string>
-			<key>label</key>
-			<string>上滑到屏幕中间触发后台</string>
 		</dict>
 		<dict>
 			<key>cell</key>
