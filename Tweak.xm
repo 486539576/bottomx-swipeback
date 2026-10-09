@@ -214,8 +214,10 @@ static BOOL bx_isLocked(void) {
     Class lm = NSClassFromString(@"SBLockScreenManager");
     id inst = bx_sharedInstanceForClass(lm);
     if (inst) {
-        if ([inst respondsToSelector:@selector(isUILocked)]) return [(id)inst isUILocked];
-        if ([inst respondsToSelector:@selector(isLocked)])    return [(id)inst isLocked];
+        if ([inst respondsToSelector:@selector(isUILocked)])
+            return ((BOOL (*)(id, SEL))objc_msgSend)(inst, @selector(isUILocked));
+        if ([inst respondsToSelector:@selector(isLocked)])
+            return ((BOOL (*)(id, SEL))objc_msgSend)(inst, @selector(isLocked));
     }
     return NO;
 }
