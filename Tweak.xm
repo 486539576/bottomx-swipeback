@@ -286,54 +286,13 @@ static BOOL bx_hasForegroundApp(void) {
 }
 
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    UIPanGestureRecognizer *gr = (UIPanGestureRecognizer *)self;
-    UITouch *t = touches.anyObject;
-    NSValue *sv = objc_getAssociatedObject(self, @selector(bxSwipeStart));
-    NSNumber *handled = objc_getAssociatedObject(self, @selector(bxSwipeHandled));
-    CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
-    CGPoint cur   = (t && gr.view) ? [t locationInView:gr.view] : start;
-
-    // 桌面/锁屏（无前台 App）：放行系统上滑，不进入二次确认
-    if (!bx_hasForegroundApp() || bx_isLocked()) {
-        %orig;
-        return;
-    }
-
-    if (g_enabled && !handled.boolValue && start.x >= 0) {
-        CGFloat dy = start.y - cur.y;
-        CGFloat backThresh = bx_lerp(45.f, 12.f, g_backSens);   // 角落上滑位移阈值（灵敏度高→滑一点就算）
-        if (dy > backThresh) {                                   // 确实在向上滑
-            if (bx_inCorner(start)) {
-                objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(YES), OBJC_ASSOCIATION_RETAIN);
-                bx_swallowGesture(gr);             // 阻止系统回桌面 / 带动 App
-                bx_sendBackNotify();               // 通知 App 层执行返回；App 最上级则自动回桌面
-                bx_sendOriginalBackNotify();       // 兼容原版 HomeTapBackApp
-                return;                            // 不 %orig
-            }
-        }
-    }
+    // 上滑返回已停用：恢复系统原生上滑手势（上滑中间=后台、上滑到顶=回桌面由系统处理）。
+    // 左右两侧滑动返回改由 App 层(SwipeBackApp)通过边缘触摸检测实现。
     %orig;
 }
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    UIPanGestureRecognizer *gr = (UIPanGestureRecognizer *)self;
-    NSNumber *handled = objc_getAssociatedObject(self, @selector(bxSwipeHandled));
-    if (g_enabled && !handled.boolValue) {
-        UITouch *t = touches.anyObject;
-        NSValue *sv = objc_getAssociatedObject(self, @selector(bxSwipeStart));
-        CGPoint start = sv ? sv.CGPointValue : CGPointMake(-1.f, -1.f);
-        CGPoint end   = (t && gr.view) ? [t locationInView:gr.view] : start;
-        CGRect b = [UIScreen mainScreen].bounds;
-        // 起点不在角落：上滑到中间 -> 后台（用中间后台灵敏度）
-        if (start.x >= 0 && !bx_inCorner(start)) {
-            CGFloat midY = bx_lerp(0.55f, 0.30f, g_midSens) * b.size.height;
-            if (end.y <= midY && g_middleSwitcher) {
-                bx_swallowGesture(gr);
-                bx_triggerAppSwitcher();
-                return;                            // 不 %orig
-            }
-        }
-    }
+    // 恢复系统原生上滑手势处理
     %orig;
 }
 

@@ -1,12 +1,14 @@
 // ============================================================================
-//  上滑返回 —— App 层 (SwipeBackApp)  注入所有 App (filter com.apple.UIKit)
-//  功能：监听 SB 层发来的 "com.doubao.swipeback.back" 通知，在主线程直接执行
-//  "返回上一级"（导航栈 pop / 模态 dismiss / webview 返回）。
-//  不抢手势、不影响系统（手势由 SB 层 HomeTapBackSwipe 拦截）。
+//  左右两侧滑动返回 —— App 层 (SwipeBackApp)  注入所有 App (filter com.apple.UIKit)
+//  功能：在 App 内检测"左右边缘向内滑动"手势：
+//      - 左边缘向右滑 = 返回上一级
+//      - 右边缘向左滑 = 返回上一级
+//  返回直接由 App 层执行（导航 pop / 模态 dismiss / webview 返回）。
+//  到 App 最上级再滑动 = 请求 SpringBoard 回桌面（一路返回的终点）。
+//  不抢系统上滑手势：上滑中间=后台、上滑到顶=回桌面仍由系统处理。
 // ============================================================================
 
 #import <UIKit/UIKit.h>
-#import <notify.h>
 #import <os/log.h>
 
 static void bx_log(NSString *fmt, ...) {
@@ -14,6 +16,39 @@ static void bx_log(NSString *fmt, ...) {
     NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:args];
     va_end(args);
     os_log(OS_LOG_DEFAULT, "%{public}@", msg);
+}
+
+// ---- 设置缓存（与 Root.plist key 对齐）----
+static BOOL       bx_masterEnabled = NO;
+static BOOL       bx_swipeEnabled  = NO;
+static NSString  *bx_area          = @"Both";
+static CGFloat    bx_backSens      = 0.6f;
+
+static void bx_loadPrefs(void) {
+    @try {
+        NSString *p = @"/var/mobile/Library/Preferences/com.colorblack.bottomx.plist";
+        NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:p];
+        if (!d || d.count == 0)
+            d = [NSDictionary dictionaryWithContentsOfFile:@"/var/jb/var/mobile/Library/Preferences/com.colorblack.bottomx.plist"];
+        if (!d) d = @{};
+        bx_masterEnabled = [d[@"MasterEnabled"] boolValue];
+        bx_swipeEnabled  = [d[@"SwipeBackEnabled"] boolValue];
+        bx_area          = d[@"SwipeBackArea"] ?: @"Both";
+        bx_backSens      = [d[@"SwipeBackBackSensitivity"] floatValue];
+        if (bx_backSens < 0.05f || bx_backSens > 1.f) bx_backSens = 0.6f;
+        bx_log(@"[SwipeBackApp] prefs: master=%d swipe=%d area=%@ sens=%.2f",
+               bx_masterEnabled, bx_swipeEnabled, bx_area, bx_backSens);
+    } @catch (...) {}
+}
+
+static BOOL bx_active(void) {
+    return bx_masterEnabled && bx_swipeEnabled;
+}
+
+static void bxOnSettingsChanged(CFNotificationCenterRef center, void *observer,
+                                CFStringRef name, const void *object,
+                                CFDictionaryRef userInfo) {
+    bx_loadPrefs();
 }
 
 // ---- 找到当前最上层可返回的控制器 ----
@@ -40,7 +75,7 @@ static void bxTriggerBack(UIView *view) {
     UIViewController *top = bxTopViewController(root);
     BOOL handled = NO;
 
-    // 1) 优先 pop 导航栈（从 top 向父级找能返回的 UINavigationController，最多6层）
+    // 1) 优先 pop 导航栈
     UIViewController *c = top;
     for (int i = 0; i < 6 && c; i++) {
         UINavigationController *nav = [c isKindOfClass:[UINavigationController class]]
@@ -80,34 +115,64 @@ static void bxTriggerBack(UIView *view) {
             [marker writeToFile:@"/var/mobile/swipeback_gohome_sent.txt" atomically:YES
                        encoding:NSUTF8StringEncoding error:nil];
         } @catch (...) {}
-        // 回桌面：触发原版可靠链路(com.hometapback.gohome -> 原版SB dispatchGoHome) + 我的链路
+        // 触发原版可靠回桌面链路 + 我的链路
         CFNotificationCenterRef nc = CFNotificationCenterGetDarwinNotifyCenter();
         CFNotificationCenterPostNotification(nc, CFSTR("com.hometapback.gohome"), NULL, NULL, true);
         CFNotificationCenterPostNotification(nc, CFSTR("com.colorblack.bottomx.hometap.ack"), NULL, NULL, true);
         CFNotificationCenterPostNotification(nc, CFSTR("com.doubao.swipeback.gohome"), NULL, NULL, true);
-        bx_log(@"[SwipeBackApp] at root page -> request go-home (original+dual)");
+        bx_log(@"[SwipeBackApp] at root page -> request go-home");
     }
 }
 
-// ---- 收到 SB 层"角落上滑"通知 -> 主线程执行返回上一级 ----
-static void bxOnBackNotify(CFNotificationCenterRef center, void *observer,
-                           CFStringRef name, const void *object, CFDictionaryRef userInfo) {
-    bx_log(@"[SwipeBackApp] received back-notify");
-    dispatch_async(dispatch_get_main_queue(), ^{
-        NSArray<UIWindow *> *wins = [UIApplication sharedApplication].windows;
-        for (UIWindow *w in wins) {
-            if (w.isKeyWindow || w.rootViewController) {
-                bxTriggerBack(w);
-                break;
-            }
-        }
-    });
+#pragma mark - 左右边缘滑动返回检测（App 层，不抢系统上滑）
+%hook UIWindow
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    %orig;
+    if (!bx_active()) return;
+    UITouch *t = touches.anyObject;
+    if (t) {
+        CGPoint p = [t locationInView:self];
+        objc_setAssociatedObject(self, @selector(bxTouchStart),
+                                 [NSValue valueWithCGPoint:p], OBJC_ASSOCIATION_RETAIN);
+        objc_setAssociatedObject(self, @selector(bxTouchDone), @(NO), OBJC_ASSOCIATION_RETAIN);
+    }
 }
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    %orig;
+    if (!bx_active()) return;
+    NSValue *sv = objc_getAssociatedObject(self, @selector(bxTouchStart));
+    NSNumber *dn = objc_getAssociatedObject(self, @selector(bxTouchDone));
+    if (!sv || dn.boolValue) return;
+    UITouch *t = touches.anyObject;
+    if (!t) return;
+    CGPoint start = sv.CGPointValue;
+    CGPoint cur   = [t locationInView:self];
+    CGRect  b     = self.bounds;
+    if (b.size.width <= 0) return;
+
+    CGFloat zoneW  = MIN(b.size.width * (0.08f + 0.12f * bx_backSens), 140.f); // 边缘宽度(灵敏度)
+    CGFloat thresh = 18.f + 34.f * (1.0f - bx_backSens);                        // 滑动距离阈值(灵敏度)
+    CGFloat dx     = cur.x - start.x;
+    BOOL inLeft    = start.x <= zoneW;
+    BOOL inRight   = start.x >= b.size.width - zoneW;
+    BOOL okArea = [bx_area isEqualToString:@"Left"] ? inLeft
+                : [bx_area isEqualToString:@"Right"] ? inRight
+                : (inLeft || inRight);
+    BOOL okDir = (inLeft && dx > thresh) || (inRight && dx < -thresh);
+    if (okArea && okDir) {
+        objc_setAssociatedObject(self, @selector(bxTouchDone), @(YES), OBJC_ASSOCIATION_RETAIN);
+        bxTriggerBack(self);
+        bx_log(@"[SwipeBackApp] edge swipe -> back (area=%@ dir=%s)", bx_area,
+               (inLeft ? "right" : "left"));
+    }
+}
+%end
 
 #pragma mark - 构造
 %ctor {
     @try {
-        // 加载标记文件：确认 App 层 dylib 注入成功
         NSString *marker = [NSString stringWithFormat:@"%@ pid=%d app=%@\n",
                             [NSDate date], (int)getpid(),
                             [[NSBundle mainBundle] bundleIdentifier]];
@@ -117,9 +182,9 @@ static void bxOnBackNotify(CFNotificationCenterRef center, void *observer,
                    encoding:NSUTF8StringEncoding error:nil];
     } @catch (...) {}
 
-    // 监听 SB 层"角落上滑返回"通知
+    bx_loadPrefs();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                    bxOnBackNotify, CFSTR("com.doubao.swipeback.back"),
+                                    bxOnSettingsChanged, CFSTR("com.colorblack.bottomx.settings.changed"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    bx_log(@"[SwipeBackApp] LOADED into App");
+    bx_log(@"[SwipeBackApp] LOADED (edge-swipe back)");
 }
