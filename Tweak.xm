@@ -6,8 +6,8 @@
 //    - 在加宽后的白条区域单击 → 发原版 com.hometapback.hometap 通知，
 //      由原版 HomeTapBackApp.dylib 执行"返回上一级 / 一路返回到桌面"。
 //    - 点白条=返回上一级、到最上级再点=回桌面，跟原版手感完全一致。
-//    - 设置里一个可调项（读 com.colorblack.bottomx 域）：
-//        ① TapAreaWidth   点击区域大小（越大越容易命中）
+//    - 设置里无新增项（完全恢复原版设置界面）。
+//      白条点击区域在代码里固定加宽一点点（横向覆盖约60%），不可调。
 //    - 上滑中间=后台、上滑到顶=回桌面，完全交给系统，本层不拦截滑动。
 // ============================================================================
 
@@ -26,10 +26,9 @@ static void bx_log(NSString *fmt, ...) {
 }
 
 static NSString *const kMasterEnabled  = @"MasterEnabled";
-static NSString *const kTapAreaWidth   = @"TapAreaWidth";
 
 static BOOL    g_enabled = NO;
-static CGFloat g_areaW   = 0.60f;
+static CGFloat g_areaW   = 0.60f;   // 固定加宽一点点：横向覆盖 lerp(0.30,1.00,0.60)≈72%
 
 static CGFloat bx_lerp(CGFloat a, CGFloat b, CGFloat t) {
     if (t < 0) t = 0; if (t > 1) t = 1;
@@ -40,8 +39,6 @@ static void bx_loadPrefs(void) {
     NSUserDefaults *d = [[NSUserDefaults alloc] initWithSuiteName:@"com.colorblack.bottomx"];
     [d synchronize];
     g_enabled = [d boolForKey:kMasterEnabled];
-    g_areaW   = [d floatForKey:kTapAreaWidth];
-    if (g_areaW < 0.1f) g_areaW = 0.60f;
 }
 
 static id bx_sharedInstanceForClass(Class cls) {

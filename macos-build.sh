@@ -88,13 +88,13 @@ echo "已删除原版SB检测 + 我方App层；保留原版 HomeTapBackApp 执�
 cat > "$STAGE/control/control" <<'EOF'
 Package: com.colorblack.bottomx
 Name: Bottom-x roothide
-Description: 点击底部小白条逐级返回、一路返回到桌面（与原版一致），并把小白条可点击区域加宽一点点，不必精准点在白条上。设置新增"点击区域大小"可调项。arm64e B-key 编译。
+Description: 点击底部小白条逐级返回、一路返回到桌面（与原版完全一致），仅把小白条可点击区域固定加宽一点点。设置界面保持原版，不新增任何设置项。arm64e B-key 编译。
 Maintainer: Color Black
 Author: Color Black
 Section: Tweaks
 Depends: mobilesubstrate | ellekit, preferenceloader, firmware (>= 14.0)
 Architecture: iphoneos-arm64e
-Version: 0.6.0
+Version: 0.7.0
 Installed-Size: 3100
 EOF
 echo "2.0" > "$STAGE/debian-binary"
@@ -102,7 +102,7 @@ echo "2.0" > "$STAGE/debian-binary"
 mkdir -p "$STAGE/pkg/DEBIAN"
 cp "$STAGE/control/control" "$STAGE/pkg/DEBIAN/control"
 cp -r "$STAGE/data/." "$STAGE/pkg/"
-OUT="${OUT_DIR:-$PWD}/Bottom-x_0.6.0_点击返回.deb"
+OUT="${OUT_DIR:-$PWD}/Bottom-x_0.7.0_点击返回.deb"
 dpkg-deb --build --root-owner-group "$STAGE/pkg" "$OUT"
 rm -rf "$STAGE"
 echo "✅ 打包完成: $OUT"
