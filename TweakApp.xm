@@ -37,38 +37,45 @@ static void bxTriggerBack(UIView *view) {
     if (!root) return;
 
     UIViewController *top = bxTopViewController(root);
+    BOOL handled = NO;
 
-    // 1) 导航控制器可返回 -> pop
-    UINavigationController *nav = top.navigationController;
-    if (nav && nav.viewControllers.count > 1) {
-        [nav popViewControllerAnimated:YES];
-        bx_log(@"[SwipeBackApp] popped nav");
-        return;
+    // 1) 优先 pop 导航栈（从 top 向父级找能返回的 UINavigationController，最多6层）
+    UIViewController *c = top;
+    for (int i = 0; i < 6 && c; i++) {
+        UINavigationController *nav = [c isKindOfClass:[UINavigationController class]]
+            ? (UINavigationController *)c : c.navigationController;
+        if (nav && nav.viewControllers.count > 1) {
+            [nav popViewControllerAnimated:YES];
+            bx_log(@"[SwipeBackApp] popped nav (%ld -> %ld)",
+                   (long)nav.viewControllers.count, (long)nav.viewControllers.count - 1);
+            handled = YES;
+            break;
+        }
+        c = c.navigationController ?: c.parentViewController;
     }
-    // 2) 有被 present 的模态 -> dismiss
-    if (top.presentingViewController && ![top isKindOfClass:[UIAlertController class]]) {
+
+    // 2) dismiss 模态
+    if (!handled && top.presentingViewController && ![top isKindOfClass:[UIAlertController class]]) {
         [top dismissViewControllerAnimated:YES completion:nil];
         bx_log(@"[SwipeBackApp] dismissed modal");
-        return;
+        handled = YES;
     }
+
     // 3) webview 内可返回
-    if ([top respondsToSelector:@selector(webView)]) {
+    if (!handled && [top respondsToSelector:@selector(webView)]) {
         id wv = [top valueForKey:@"webView"];
         if (wv && [wv respondsToSelector:@selector(canGoBack)] && [wv canGoBack]) {
             [wv goBack];
             bx_log(@"[SwipeBackApp] webview goBack");
-            return;
+            handled = YES;
         }
     }
-    // 4) 栈内还有其它页面时尝试 pop 最外层
-    UIViewController *last = root;
-    while (last.presentedViewController) last = last.presentedViewController;
-    if ([last isKindOfClass:[UINavigationController class]]) {
-        UINavigationController *lnav = (UINavigationController *)last;
-        if (lnav.viewControllers.count > 1) {
-            [lnav popViewControllerAnimated:YES];
-            bx_log(@"[SwipeBackApp] popped outer nav");
-        }
+
+    // 4) 已到 App 最上级、无返回可执行 -> 请求 SB 层回桌面（一路返回的终点）
+    if (!handled) {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFSTR("com.doubao.swipeback.gohome"), NULL, NULL, true);
+        bx_log(@"[SwipeBackApp] at root page -> request go-home");
     }
 }
 

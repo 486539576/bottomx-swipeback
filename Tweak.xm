@@ -266,17 +266,8 @@ static BOOL bx_hasForegroundApp(void) {
         if (dy > backThresh) {                                   // 确实在向上滑
             if (bx_inCorner(start)) {
                 objc_setAssociatedObject(self, @selector(bxSwipeHandled), @(YES), OBJC_ASSOCIATION_RETAIN);
-                BXUpSwipeController *c = [BXUpSwipeController shared];
-                CGFloat homeThresh = bx_lerp(50.f, 15.f, g_homeSens); // 二次回桌面位移阈值
-                if (g_homeConfirm && [c isPendingHome] && dy > homeThresh) {
-                    [c resetPending];
-                    bx_swallowGesture(gr);
-                    bx_goHome();
-                    return;                        // 不 %orig
-                }
-                [c startPendingHome];
                 bx_swallowGesture(gr);             // 阻止系统回桌面 / 带动 App
-                bx_sendBackNotify();               // 通知 App 层执行返回上一级
+                bx_sendBackNotify();               // 通知 App 层执行返回；App 最上级则自动回桌面
                 bx_sendOriginalBackNotify();       // 兼容原版 HomeTapBackApp
                 return;                            // 不 %orig
             }
@@ -313,6 +304,13 @@ static BOOL bx_hasForegroundApp(void) {
 }
 %end
 
+// 收到 App 层"已到最上级、请回桌面"通知 -> 执行返回桌面（一路返回的终点）
+static void bxOnGoHomeNotify(CFNotificationCenterRef center, void *observer,
+                             CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    bx_log(@"[SwipeBack] got go-home notify from App layer");
+    dispatch_async(dispatch_get_main_queue(), ^{ bx_goHome(); });
+}
+
 #pragma mark - 构造
 %ctor {
     @try {
@@ -320,6 +318,11 @@ static BOOL bx_hasForegroundApp(void) {
         bx_log(@"[SwipeBack] LOADED into SpringBoard, enabled=%d area=%ld backSens=%.2f midSens=%.2f homeSens=%.2f",
                g_enabled, (long)g_area, g_backSens, g_midSens, g_homeSens);
     } @catch (...) {}
+
+    // 监听 App 层"已到最上级"的回桌面请求
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
+                                    bxOnGoHomeNotify, CFSTR("com.doubao.swipeback.gohome"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 
     @try {
         NSString *marker = [NSString stringWithFormat:@"%@ pid=%d\n", [NSDate date], (int)getpid()];
