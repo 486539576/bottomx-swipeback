@@ -111,7 +111,7 @@ static void bx_sendOriginalBackNotify(void) {
     bx_log(@"[SwipeBack] original back-notify posted -> %@", kNotifyHomeTap);
 }
 
-// 返回桌面（App 最上级再上滑时的终点）：多方式依次尝试，确保至少一个生效
+// 返回桌面（App 最上级再上滑时的终点）：按最可靠方式依次尝试，确保至少一个生效
 static void bx_goHome(void) {
     bx_log(@"[SwipeBack] ACTION go-home");
     // 1) 原版 BXHomeDispatcher.dispatchGoHome（最贴近原插件回桌面）
@@ -126,7 +126,29 @@ static void bx_goHome(void) {
             return;
         }
     } @catch (...) {}
-    // 2) 系统 Home 键单按派发
+    // 2) SBMainWorkspace.transitionToHomeScreenWithCompletion:（iOS 正规回主屏）
+    @try {
+        Class w = NSClassFromString(@"SBMainWorkspace");
+        id ws = bx_sharedInstanceForClass(w);
+        SEL t = NSSelectorFromString(@"transitionToHomeScreenWithCompletion:");
+        if (ws && [ws respondsToSelector:t]) {
+            ((void (*)(id, SEL, id))[ws methodForSelector:t])(ws, t, nil);
+            bx_log(@"[SwipeBack] go-home via SBMainWorkspace.transitionToHomeScreen");
+            return;
+        }
+    } @catch (...) {}
+    // 3) SBUIController.handleMenuButtonTap（Home 键 tap）
+    @try {
+        Class sbui = NSClassFromString(@"SBUIController");
+        id c = bx_sharedInstanceForClass(sbui);
+        SEL m = NSSelectorFromString(@"handleMenuButtonTap");
+        if (c && [c respondsToSelector:m]) {
+            ((void (*)(id, SEL))[c methodForSelector:m])(c, m);
+            bx_log(@"[SwipeBack] go-home via handleMenuButtonTap");
+            return;
+        }
+    } @catch (...) {}
+    // 4) 系统 Home 键单按派发
     @try {
         Class sbui = NSClassFromString(@"SBUIController");
         id c = bx_sharedInstanceForClass(sbui);
@@ -139,7 +161,7 @@ static void bx_goHome(void) {
             }
         }
     } @catch (...) {}
-    // 3) 发原版 gohome 通知 + 系统 home 通知兜底
+    // 5) 发原版 gohome 通知 + 系统 home 通知兜底
     @try {
         notify_post([kNotifyGoHome UTF8String]);
         notify_post("com.colorblack.bottomx.gohome");
