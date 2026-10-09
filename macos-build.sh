@@ -17,15 +17,17 @@ echo "theos 目录: $THEOS"
 make clean || true
 make
 
-# 取到刚编好的 SB 层 dylib（加宽白条区域）
+# 取到刚编好的两个 dylib（SB 层加宽白条 + App 层执行返回）
 DYLIB_SB=$(find .theos -name 'HomeTapBackSwipe.dylib' 2>/dev/null | head -1)
-if [ -z "$DYLIB_SB" ]; then
-  echo "ERROR: 找不到编译产物 (SB=$DYLIB_SB)" >&2; exit 1
+DYLIB_APP=$(find .theos -name 'SwipeBackApp.dylib' 2>/dev/null | head -1)
+if [ -z "$DYLIB_SB" ] || [ -z "$DYLIB_APP" ]; then
+  echo "ERROR: 找不到编译产物 (SB=$DYLIB_SB APP=$DYLIB_APP)" >&2; exit 1
 fi
 echo "SB 产物: $DYLIB_SB"; file "$DYLIB_SB" | head -1
+echo "APP 产物: $DYLIB_APP"; file "$DYLIB_APP" | head -1
 
 # ---- 3. 把 substrate 依赖路径改成 roothide 的 .jbroot（与原件一致）----
-python3 - "$DYLIB_SB" <<'PYEOF'
+python3 - "$DYLIB_SB" "$DYLIB_APP" <<'PYEOF'
 import struct, sys
 for p in sys.argv[1:]:
     d = bytearray(open(p,'rb').read())
@@ -71,30 +73,31 @@ mkdir -p "$STAGE/data" "$STAGE/control"
 dpkg-deb -x original.deb "$STAGE/data/" 2>/dev/null || {
   ar x original.deb && xz -dc data.tar.lzma | tar -x -C "$STAGE/data/"
 }
-# 覆盖为本次新编译的 SB 层 dylib（B-key arm64e，加宽白条区域）
+# 覆盖为本次新编译的两个 dylib（B-key arm64e）：SB 层加宽白条 + App 层执行返回
 cp "$DYLIB_SB" "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib"
 chmod 755 "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib"
-# 覆盖设置（原版全部设置项 + 白条点击区域/反应速度）、西瓜图标、SB filter
+cp "$DYLIB_APP" "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.dylib"
+chmod 755 "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.dylib"
+# 覆盖设置（纯原版设置界面，不新增任何项）、西瓜图标、SB/App 的 filter plist
 cp Root.plist "$STAGE/data/Library/PreferenceBundles/Bottom-xPrefs.bundle/Root.plist"
 cp icon.png icon@2x.png icon@3x.png "$STAGE/data/Library/PreferenceBundles/Bottom-xPrefs.bundle/"
 cp HomeTapBackSwipe.plist "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.plist"
-# 删除原版 SB 层检测（避免双重触发）与我方的 App 层（返回交给原版 HomeTapBackApp）
+cp SwipeBackApp.plist "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.plist"
+# 删除原版 SB 层检测（避免双重触发），返回统一由我方 App 层执行
 rm -f "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/BarYHomeTapBackSB.dylib" \
-      "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/BarYHomeTapBackSB.plist" \
-      "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.dylib" \
-      "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.plist"
-echo "已删除原版SB检测 + 我方App层；保留原版 HomeTapBackApp 执行返回"
+      "$STAGE/data/Library/MobileSubstrate/DynamicLibraries/BarYHomeTapBackSB.plist"
+echo "已删除原版SB检测；返回由 SwipeBackApp 执行；保留原版 HomeTapBackApp"
 
 cat > "$STAGE/control/control" <<'EOF'
 Package: com.colorblack.bottomx
 Name: Bottom-x roothide
-Description: 点击底部小白条逐级返回、一路返回到桌面（与原版完全一致），仅把小白条可点击区域固定加宽一点点。设置界面保持原版，不新增任何设置项。arm64e B-key 编译。
+Description: 点击底部小白条逐级返回、一路返回到桌面。小白条可点击区域已固定加宽一点点，不必精准点在白条上。返回由 App 层(SwipeBackApp)在 App 内直接执行(导航pop/模态dismiss/web返回)。设置界面保持原版，不新增任何设置项。arm64e B-key 编译。
 Maintainer: Color Black
 Author: Color Black
 Section: Tweaks
 Depends: mobilesubstrate | ellekit, preferenceloader, firmware (>= 14.0)
 Architecture: iphoneos-arm64e
-Version: 0.7.0
+Version: 0.8.0
 Installed-Size: 3100
 EOF
 echo "2.0" > "$STAGE/debian-binary"
@@ -102,7 +105,7 @@ echo "2.0" > "$STAGE/debian-binary"
 mkdir -p "$STAGE/pkg/DEBIAN"
 cp "$STAGE/control/control" "$STAGE/pkg/DEBIAN/control"
 cp -r "$STAGE/data/." "$STAGE/pkg/"
-OUT="${OUT_DIR:-$PWD}/Bottom-x_0.7.0_点击返回.deb"
+OUT="${OUT_DIR:-$PWD}/Bottom-x_0.8.0_点击返回.deb"
 dpkg-deb --build --root-owner-group "$STAGE/pkg" "$OUT"
 rm -rf "$STAGE"
 echo "✅ 打包完成: $OUT"

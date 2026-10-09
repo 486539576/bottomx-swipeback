@@ -3,8 +3,8 @@
 // ----------------------------------------------------------------------------
 //  SpringBoard 层：
 //    只做一件事：把"小白条可点击区域"加宽一点点，其余全部恢复原版默认。
-//    - 在加宽后的白条区域单击 → 发原版 com.hometapback.hometap 通知，
-//      由原版 HomeTapBackApp.dylib 执行"返回上一级 / 一路返回到桌面"。
+//    - 在加宽后的白条区域单击 → 发返回通知给 App 层(SwipeBackApp)，
+//      由它在 App 内直接执行"返回上一级 / 一路返回到桌面"。
 //    - 点白条=返回上一级、到最上级再点=回桌面，跟原版手感完全一致。
 //    - 设置里无新增项（完全恢复原版设置界面）。
 //      白条点击区域在代码里固定加宽一点点（横向覆盖约60%），不可调。
@@ -68,12 +68,6 @@ static BOOL bx_isLocked(void) {
     }
     return NO;
 }
-static BOOL bx_hasForegroundApp(void) {
-    @try {
-        id app = [[UIApplication sharedApplication] valueForKey:@"frontMostApplication"];
-        return app != nil;
-    } @catch (NSException *e) { return YES; }
-}
 
 // 点击点是否在"加宽的白条区域"（屏幕底部，横向向两侧展开）
 static BOOL bx_inTapArea(CGPoint p) {
@@ -86,19 +80,11 @@ static BOOL bx_inTapArea(CGPoint p) {
     return fabs(p.x - b.size.width / 2.0) <= half;
 }
 
-// 发原版返回通知（HomeTapBackApp 执行返回），point 用真实点击位置
+// 发"返回上一级"通知给 App 层(SwipeBackApp)，由它在 App 内直接 pop/dismiss 返回
 static void bx_sendBackNotify(CGPoint point) {
-    NSMutableDictionary *info = [NSMutableDictionary dictionary];
-    info[@"point"]    = @{ @"x": @(point.x), @"y": @(point.y) };
-    info[@"bundle"]   = @"";
-    info[@"senderID"] = @((uint64_t)(((uint64_t)arc4random() << 32) | arc4random()));
-    info[@"tapID"]    = @((uint64_t)(((uint64_t)arc4random() << 32) | arc4random()));
-    info[@"sequence"] = @1;
-    info[@"stamp"]    = @((uint64_t)([NSProcessInfo processInfo].systemUptime * 1000.0));
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                         CFSTR("com.hometapback.hometap"), NULL,
-                                         (__bridge CFDictionaryRef)info, true);
-    bx_log(@"[HomeTapBackSwipe] white-bar tap -> original back notify");
+                                         CFSTR("com.doubao.swipeback.back"), NULL, NULL, true);
+    bx_log(@"[HomeTapBackSwipe] white-bar tap -> App layer back notify");
 }
 
 #pragma mark - 钩子：加宽白条区域的单击返回
@@ -120,7 +106,7 @@ static void bx_sendBackNotify(CGPoint point) {
 
 - (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     %orig;
-    if (!bx_hasForegroundApp() || bx_isLocked()) return;   // 桌面/锁屏完全放行
+    if (bx_isLocked()) return;   // 锁屏完全放行
     if (!g_enabled) return;
     NSNumber *handled = objc_getAssociatedObject(self, @selector(bxTapHandled));
     if (handled.boolValue) return;

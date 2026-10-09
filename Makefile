@@ -15,17 +15,23 @@ TARGET := iphone:clang:latest:14.0
 ARCHS  = arm64e
 
 # 本 dylib 通过 SpringBoard 过滤加载，把"小白条可点击区域"加宽，
-# 检测到单击后发原版返回通知，由原版 HomeTapBackApp.dylib 执行返回。
+# 检测到单击后发返回通知，由 App 层(SwipeBackApp)执行返回上一级。
 INSTALL_TARGET_PROCESSES = SpringBoard
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = HomeTapBackSwipe
+TWEAK_NAME = HomeTapBackSwipe SwipeBackApp
 
 HomeTapBackSwipe_FILES    = Tweak.xm
 HomeTapBackSwipe_CFLAGS   = -fobjc-arc 
 HomeTapBackSwipe_FRAMEWORKS = UIKit Foundation CoreGraphics QuartzCore AudioToolbox
 HomeTapBackSwipe_LDFLAGS = -Wl,-no_dead_strip_inits_and_terms -Wl,-install_name,@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/HomeTapBackSwipe.dylib
 HomeTapBackSwipe_LIBRARIES  = substrate
+
+SwipeBackApp_FILES    = TweakApp.xm
+SwipeBackApp_CFLAGS   = -fobjc-arc
+SwipeBackApp_FRAMEWORKS = UIKit Foundation
+SwipeBackApp_LDFLAGS = -Wl,-no_dead_strip_inits_and_terms -Wl,-install_name,@loader_path/.jbroot/Library/MobileSubstrate/DynamicLibraries/SwipeBackApp.dylib
+SwipeBackApp_LIBRARIES  = substrate
 
 include $(THEOS_MAKE_PATH)/tweak.mk
