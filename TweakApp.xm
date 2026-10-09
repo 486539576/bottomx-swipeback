@@ -81,11 +81,10 @@ static void bxTriggerBack(UIView *view) {
                        encoding:NSUTF8StringEncoding error:nil];
         } @catch (...) {}
         // 回桌面：触发原版可靠链路(com.hometapback.gohome -> 原版SB dispatchGoHome) + 我的链路
-        notify_post("com.hometapback.gohome");
-        notify_post("com.colorblack.bottomx.hometap.ack");
-        notify_post("com.doubao.swipeback.gohome");
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-                                             CFSTR("com.doubao.swipeback.gohome"), NULL, NULL, true);
+        CFNotificationCenterRef nc = CFNotificationCenterGetDarwinNotifyCenter();
+        CFNotificationCenterPostNotification(nc, CFSTR("com.hometapback.gohome"), NULL, NULL, true);
+        CFNotificationCenterPostNotification(nc, CFSTR("com.colorblack.bottomx.hometap.ack"), NULL, NULL, true);
+        CFNotificationCenterPostNotification(nc, CFSTR("com.doubao.swipeback.gohome"), NULL, NULL, true);
         bx_log(@"[SwipeBackApp] at root page -> request go-home (original+dual)");
     }
 }

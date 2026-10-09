@@ -364,17 +364,13 @@ static void bxOnGoHomeNotify(CFNotificationCenterRef center, void *observer,
     } @catch (...) {}
 
     // 监听回桌面请求（我的通知 + 原版通知双保险）
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                    bxOnGoHomeNotify, CFSTR("com.doubao.swipeback.gohome"),
+    CFNotificationCenterRef nc = CFNotificationCenterGetDarwinNotifyCenter();
+    CFNotificationCenterAddObserver(nc, NULL, bxOnGoHomeNotify, CFSTR("com.doubao.swipeback.gohome"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL,
-                                    bxOnGoHomeNotify, CFSTR("com.hometapback.gohome"),
+    CFNotificationCenterAddObserver(nc, NULL, bxOnGoHomeNotify, CFSTR("com.hometapback.gohome"),
                                     NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
-    static uint32_t gohomeToken = 0;
-    notify_register_dispatch("com.doubao.swipeback.gohome", &gohomeToken,
-                             dispatch_get_main_queue(), ^(int t) { bx_goHome(); });
-    notify_register_dispatch("com.hometapback.gohome", &gohomeToken,
-                             dispatch_get_main_queue(), ^(int t) { bx_goHome(); });
+    CFNotificationCenterAddObserver(nc, NULL, bxOnGoHomeNotify, CFSTR("com.colorblack.bottomx.hometap.ack"),
+                                    NULL, CFNotificationSuspensionBehaviorDeliverImmediately);
 
     @try {
         NSString *marker = [NSString stringWithFormat:@"%@ pid=%d\n", [NSDate date], (int)getpid()];
